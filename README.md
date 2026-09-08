@@ -1,8 +1,11 @@
 # open-ek75
 
-**Configure the RGB lighting of a Dareu TK51G/EK75 keyboard on Linux — no
-Windows needed.** Read the current effect/colour/brightness of every lighting
-zone, and set a solid colour or a pulsing one, from the command line.
+**English** · [Português (Brasil)](README.pt-br.md)
+
+**Configure the RGB lighting of a Dareu TK51G/EK75 keyboard — sold in Brazil as
+the Husky Nomadic — on Linux, with no Windows needed.** Read the real
+effect, colour and brightness of every lighting zone and change any of them,
+from a graphical interface or the command line.
 
 Dareu (the actual chip/firmware vendor) ships a **web-based** configuration
 tool, [dr.dareu.com](https://dr.dareu.com/), that talks to the keyboard
@@ -34,7 +37,13 @@ their own model names. Confirmed so far:
 | Brand | Model(s) |
 |-------|----------|
 | Dareu | TK51G / EK75 |
-| Husky (Kabum, Brazil) | HTG200 / HTG500 / HTG800 V2 |
+| Husky (Kabum, Brazil) | **Nomadic** — HTG200 / HTG500 / HTG800 V2 |
+
+The name on the box and the name in the firmware are different, which is worth
+knowing if you are searching: Husky sells this as the **Nomadic**, while the
+keyboard itself only ever reports `TK51G` / `EK75`. "Nomadic" appears nowhere in
+Dareu's own driver, its device profile, or the Windows application's binaries —
+it is Husky's retail branding over a Dareu reference design.
 
 If your keyboard's `lsusb` shows a **different** PID under vendor `260D`,
 check `https://dr.dareu.com/products/<PID>/<PID>.json` — if it exists and its
@@ -150,9 +159,6 @@ The lighting page asks the keyboard which effects each zone supports and shows
 only those, and shows a control only when the selected effect has it — no speed
 slider on `Static`, no direction arrows on anything but `Wave` — which is what
 the official software does, for the same reason.
-
-The interface is Portuguese when your locale is (`pt_*`) and English
-otherwise; `OPEN_EK75_LANG=en` or `=pt` overrides it.
 
 ### Command line
 
