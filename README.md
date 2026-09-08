@@ -53,6 +53,16 @@ check `https://dr.dareu.com/products/<PID>/<PID>.json` — if it exists and its
 already does not hardcode incorrectly — but `find_device()`'s descriptor
 signature was written against the `FwType: 0` device and may need adjusting.
 
+> **Connect the keyboard by its USB cable to configure it.** This model can
+> also run over a 2.4G dongle, and configuration does not work that way — the
+> keyboard will not answer, and `open-ek75` will report that it cannot find it.
+> Three separate things agree on this: the vendor's own JavaScript switches to
+> a different Report ID when its `WirelessFlag` says 2.4G, its Windows
+> application hides a whole `gdDisableWl` panel of settings when the connection
+> is wireless, and the owner of the unit this was built against confirmed it
+> directly. Once a setting is written over the cable it is kept in the
+> keyboard's own memory, so you can unplug and go back to wireless afterwards.
+
 ## What works
 
 - **A graphical interface** (`open-ek75 gui`) with the keyboard drawn from

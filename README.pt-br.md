@@ -54,6 +54,16 @@ diferente exige outro Report ID e outro tamanho, coisa que o
 descritor do `find_device()` foi escrita contra o dispositivo `FwType: 0` e pode
 precisar de ajuste.
 
+> **Conecte o teclado pelo cabo USB para configurá-lo.** Este modelo também
+> funciona por um dongle 2.4G, e a configuração não funciona assim — o teclado
+> não responde, e o `open-ek75` vai dizer que não o encontrou. Três coisas
+> distintas concordam nisso: o JavaScript do próprio fabricante troca de Report
+> ID quando o `WirelessFlag` dele indica 2.4G, o aplicativo Windows esconde um
+> painel inteiro de ajustes (`gdDisableWl`) quando a conexão é sem fio, e o dono
+> da unidade em que isto foi construído confirmou na prática. Uma vez gravado
+> pelo cabo, o ajuste fica na memória do próprio teclado — dá para desconectar e
+> voltar para o sem fio depois.
+
 ## O que funciona
 
 - **Uma interface gráfica** (`open-ek75 gui`) com o teclado desenhado a partir
