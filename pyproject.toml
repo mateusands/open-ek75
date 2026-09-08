@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "open-ek75"
+description = "Open-source RGB configuration tool for the Dareu TK51G/EK75 keyboard family on Linux (sold as Husky HTG200/HTG500/HTG800 V2 and others)"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "GPL-3.0-or-later" }
+authors = [{ name = "Mateus Andrade" }]
+keywords = ["dareu", "tk51g", "ek75", "husky", "htg", "hidraw", "linux", "rgb", "keyboard"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: System :: Hardware :: Hardware Drivers",
+    "Topic :: Utilities",
+]
+
+# Pure stdlib: zero dependencies.
+dependencies = []
+
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/mateusands/open-ek75"
+Repository = "https://github.com/mateusands/open-ek75"
+Issues = "https://github.com/mateusands/open-ek75/issues"
+
+[project.scripts]
+open-ek75 = "ek75.cli:main"
+
+[project.gui-scripts]
+open-ek75-gui = "ek75.gui.app:run"
+
+[tool.setuptools.dynamic]
+version = { attr = "ek75.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["ek75*"]
+namespaces = false
+
+# Dareu's own device profile — the GUI reads the key layout from it at runtime.
+[tool.setuptools.package-data]
+ek75 = ["data/*.json"]

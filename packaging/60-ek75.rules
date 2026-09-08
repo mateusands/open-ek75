@@ -1,0 +1,59 @@
+# udev rule for the Dareu TK51G/EK75 keyboard family (VID 260D PID 0101) —
+# open-ek75. Sold as Husky HTG200/HTG500/HTG800 V2 and under other brands
+# sharing the same Dareu/TgDevice reference design.
+#
+# Install to /etc/udev/rules.d/60-ek75.rules, then:
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+# (packaging/install.sh does both for you)
+#
+# The keyboard is configured through HID Feature Reports on its /dev/hidraw*
+# node, which is root-only by default. This rule hands access to the
+# logged-in user.
+#
+# WHY uaccess AND NOT MODE="0666"
+#
+#   MODE="0666" makes the raw HID node world-readable AND world-writable for
+#   every account on the machine, permanently. A hidraw node for a keyboard is
+#   about as sensitive as a device gets: reading it is a full keystroke
+#   logger, and writing to a *different* interface of the same device could
+#   reach the boot keyboard/mouse interfaces this rule does not intend to
+#   touch. On a multi-user box, or with any sandboxed/daemon account, 0666
+#   is a real privilege leak — see open-m711pro's rule file for the same
+#   reasoning against a mouse.
+#
+#   TAG+="uaccess" is the modern systemd/logind mechanism: logind attaches an
+#   ACL granting access to the user of the *currently active local session*,
+#   and revokes it when that session ends or is switched away. Same
+#   convenience for a normal desktop, far smaller blast radius.
+#
+#   Requirement: systemd-logind (any mainstream desktop distro). If you are on
+#   a system without logind, comment the rule out and uncomment the GROUP
+#   fallback below — it is still better than 0666 because access is limited
+#   to members of one group.
+#
+# WHY THE FILENAME STARTS WITH 60 AND NOT 99
+#
+#   This matters and is easy to get wrong: TAG+="uaccess" does not itself
+#   grant anything. systemd applies the ACL from
+#   /usr/lib/udev/rules.d/73-seat-late.rules:
+#
+#     TAG=="uaccess", ENV{MAJOR}!="", RUN{builtin}+="uaccess"
+#
+#   udev evaluates rule files in filename order, so a rule that sets the tag
+#   at 99 sets it *after* 73 already tested for it. The tag lands in the udev
+#   database — `udevadm info` will show CURRENT_TAGS=:uaccess: and everything
+#   looks correct — but the builtin was never scheduled and the device node
+#   keeps its root-only 0600 permissions. Replugging does not help, because
+#   the ordering is the same on every event.
+#
+#   This file was originally numbered 99 and had exactly that bug. Any number
+#   below 73 works; 60 matches what other hardware-access projects use
+#   (60-openrgb.rules, 60-ddcutil-i2c.rules).
+
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="260d", ATTRS{idProduct}=="0101", TAG+="uaccess"
+
+# --- Fallback for systems without systemd-logind -----------------------------
+# Comment out the rule above and uncomment this, then add yourself to the
+# group:  sudo usermod -aG plugdev $USER   (log out and back in)
+#
+#SUBSYSTEM=="hidraw", ATTRS{idVendor}=="260d", ATTRS{idProduct}=="0101", GROUP="plugdev", MODE="0660"

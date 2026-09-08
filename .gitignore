@@ -1,0 +1,46 @@
+# ─── Vendor binaries: proprietary, never committed ───────────────────────────
+# Husky's Windows app, kept locally as the reference behind docs/PROTOCOL.md's
+# "A second vendor source". This rule is deliberately SEPARATE from the docs/
+# entry below: docs/PROTOCOL.md is this project's declared source of truth and
+# the README links to it six times, so docs/ ought to be published one day —
+# and when it is, these binaries must not go with it.
+docs/vendor-binaries/
+
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+.github/
+docs/
+
+# capture traffic never enters the repo
+*.pcapng
+*.pcap
+
+# personal backups made with `open-ek75 backup`
+backup*.json
+
+# Your roster and your models — never committed (see .crew-kit-config.example)
+.crew-kit-config
+
+# ─── CrewWatch: the whole kit stays out of git ────────────────────────────────
+# Everything the installer put here is tooling for whoever is driving the agent,
+# not part of open-ek75. None of it is versioned, by decision.
+#
+# 🔴 Because nothing is distributed, nothing needs the MIT notice to travel with
+# it. `.claude/LICENSE-crewwatch` is ignored along with the rest — that is the
+# kit's own rule for a fully ignored install, not an oversight. Un-ignore the
+# notice the day any of these files starts being committed.
+.claude/
+.crew/
+.crew-kit-config.example
+AGENTS.md
+START.md
+# CLAUDE.md here predates the kit — 107 lines of this project's own conventions,
+# not an installed file. Ignored by decision: it stays on disk and out of git.
+CLAUDE.md
+.mcp.json
+.mcp.json.example
+.github/pull_request_template.md
