@@ -259,10 +259,18 @@ def build_set_lighting_effect(region_id, effect, colors, flag=0, speed=0,
                                profile_id=DEFAULT_PROFILE_ID):
     """LED_CMD_EFFECT|SET_CMD — apply an effect (and colour list) to a region.
 
-    `colors` is a list of (r, g, b) tuples, at most MAX_COLORS of them. Static
-    and Breathing take exactly one; multi-colour effects (untested here) may
-    take more — the wire format supports it (byte PAYLOAD_BASE+4 is the colour
-    count).
+    `colors` is a list of (r, g, b) tuples, at most MAX_COLORS of them, and the
+    count goes in byte PAYLOAD_BASE+4.
+
+    **`Static` and `Wave` draw only `colors[0]` on this model.** The list is
+    stored and read back byte-identical (`Static` with 2, 3 and 5 colours;
+    `Wave`, `Breathing` and `RainbowW` with fewer), and the two that were looked
+    at rendered the first colour alone. Region 1 reports 18 effects and two
+    were checked, so the rest is likely rather than confirmed — see PROTOCOL.md
+    for which ones are worth the remaining look. The list and the cap stay because they
+    are the wire format — the vendor's own app refuses a sixth — and because a
+    sibling PID with several lit zones may use the rest. See PROTOCOL.md, "The
+    colour list past the first entry is stored and never drawn".
 
     `flag` is the animation direction (DIRECTION_FORWARD/DIRECTION_REVERSE) for
     the effects that have one — see EFFECT_DIRECTION_AXIS. It is 0 for

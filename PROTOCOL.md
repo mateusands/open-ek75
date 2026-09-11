@@ -841,6 +841,64 @@ wrote flag=1 speed=3 -> read back flag=1 speed=3
 
 So the bytes are accepted and persisted, not silently dropped.
 
+### The colour list past the first entry is stored and never drawn
+
+**Confirmed negative, twice, on two different kinds of effect.** The firmware
+accepts and stores the list exactly as sent. What was actually run, spelled out
+rather than summarised, because a summary of it was wrong in an earlier draft
+of this section:
+
+| Effect | Colours sent | Read back |
+|---|---|---|
+| `Static` (1) | 2, then 3, then 5 | identical each time |
+| `Wave` (5) | 3 | identical |
+| `Breathing` (2) | 2 | identical |
+| `RainbowW` (20) | 2 | identical |
+
+Then a human looked:
+
+| Sent to region 1 | Read back | Seen on the keys |
+|---|---|---|
+| `Static`, red + green + blue | all three | **all red** |
+| `Wave`, red + green + blue | all three | **all red**, one colour sweeping |
+
+`Static` alone would have proved little — a "static" effect ignoring a list is
+easy to explain away, and that is why the test was repeated. `Wave` is animated
+and is exactly where a gradient or colour bands would be unmistakable, and it
+showed one colour too.
+
+**The exact scope of the claim, because two effects are not eighteen.** Region 1
+reports 18 effects and two of them were looked at. What is confirmed is that
+`Static` and `Wave` draw `colors[0]` alone. What is *likely*, and not confirmed,
+is that the rest behave the same: the vendor's factory profile for this model
+ships a single colour, its app caps the list at five for the whole product line
+rather than for this PID, and the framework covers mice with several separately
+lit zones — which is a much better fit for what a colour *list* is for than a
+one-zone key matrix is.
+
+There is also a rendering mode this test would not have caught. Both effects
+looked at would show several colours **spatially** — bands across the keys — and
+that is what "only red" rules out. An effect that cycled the list **over time**,
+showing one colour then the next, would look like a single colour in any given
+glance. `Breathing` is the obvious candidate for that and it was stored but not
+looked at.
+
+So, to close this properly: the effects whose names suggest several colours at
+once — `SteadyStream` (22), `LightWave` (21), `Fluxay` (29), `RainbowW` (20) —
+and `Breathing` (2) watched for **several seconds** rather than glanced at. The
+test is the one run here: three unmistakable colours, brightness up, and look.
+
+Same shape as `Flag` below, and found the same way: the read-back said yes and
+the keyboard said no. `MAX_COLORS = 5` stays in `protocol.py` because it is a
+true fact about the **wire format** — the vendor's own Windows app refuses to
+send a sixth — but it is not a feature of this model.
+
+**Do not build a multi-colour picker for this PID** on the strength of what is
+known today. `ek75/gui/` offers one colour, which is what this hardware has been
+seen to show. A sibling product in the family
+(the framework covers mice with several lit zones) may well use the rest of the
+list, which is why the builder still takes a list and still enforces the cap.
+
 ### ...but `Flag` does not visibly do anything on this model
 
 **Confirmed negative, twice.** `Wave` was run with `flag=0` and `flag=1`:
@@ -1431,16 +1489,22 @@ coincidence; nothing here rests on it.)
 
 ## What is not implemented yet
 
-- **Multi-colour effects** (anything needing `N > 1` in the colour list) —
-  the wire format supports it (`build_set_lighting_effect` takes a list
-  already); no effect using it has been tried.
-- **Nothing has been written to hardware except `LED_CMD_EFFECT`.** `Flag`,
-  `Speed` and the brightness write are all resolved on paper — two independent
-  vendor implementations agree on the layout, and the Windows app settles what
-  each field means and what range it takes (see "A second vendor source") — but
-  "the vendor's own software sends this" is still not the same as "this
-  keyboard was seen to accept it". Confirming them is cheap; see "What to try
-  next".
+- **Multi-colour effects** — tried, and this model does not render them. The
+  list is stored faithfully and only `colors[0]` is drawn; see "The colour list
+  past the first entry is stored and never drawn". The builder still takes a
+  list and still caps it at five, because that is the wire format and a sibling
+  PID may use it.
+- **`Flag` (direction)** — resolved on paper by two independent vendor
+  implementations, stored faithfully by the firmware, and **confirmed not to be
+  rendered** on this model. The control stays visible in the GUI with a label
+  saying so. This bullet used to read "nothing has been written to hardware
+  except `LED_CMD_EFFECT`"; that stopped being true when the brightness write,
+  `SetKeyAssign` and the key-map restore were each confirmed on hardware.
+- **`Speed`, visually.** Its *range* is settled — the firmware walks its own
+  value 1-3 under `Fn`+`←`/`→` — but nobody has watched an animation speed up.
+  Stored and accepted is not rendered, which is the lesson `Flag` and the colour
+  list have now taught twice. (An earlier edit of this bullet dropped `Speed`
+  from the list by accident; it was never confirmed and is back.)
 - **Effect ids 130 and 141** appear in the Windows app's direction and speed
   tables but are outside `TG_LIGHT_EFFECT_INDEX` (0-32). Probably the app's
   software-rendered effects, streamed as frames. Unverified.
@@ -1517,13 +1581,12 @@ coincidence; nothing here rests on it.)
    stored value move proves the firmware accepts and keeps it, not that it
    renders it — the same gap that `Flag` turned out to fall into.
 
-4. **Multi-colour effects** (`colors=[(r,g,b), ...]`, up to five) — the last
-   wire feature the repo models but has never exercised. Would confirm whether
-   N>1 renders as a gradient or is ignored past the first colour.
-
-5. **Multi-colour Static or Breathing** (`colors=[(r,g,b), (r,g,b)]`, up to
-   five) — would confirm whether N>1 renders as a gradient or is ignored past
-   the first colour.
+4. ~~**Multi-colour effects**~~ — **done, and the answer is no.** The firmware
+   stores up to five colours faithfully and draws only the first, on a still
+   effect and on an animated one. See "The colour list past the first entry is
+   stored and never drawn" above. (This entry appeared twice in earlier
+   versions of this list, as items 4 and 5, asking the same question in two
+   wordings — both are answered.)
 5. If you have a **different PID** in this family (check its `FwType` at
    `https://dr.dareu.com/products/<PID>/<PID>.json` first — this exact
    `find_device()`/packet layout only applies to `FwType: 0`), the read path

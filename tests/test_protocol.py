@@ -1313,6 +1313,55 @@ def test_a_backup_written_before_keys_existed_still_loads():
         assert state.load_keys(fresh) is None
 
 
+def test_a_colour_list_goes_on_the_wire_whole_even_though_only_the_first_shows():
+    """The packet carries every colour; the effects checked draw `colors[0]` alone.
+
+    Both halves are asserted here because they are separate facts and the
+    project keeps getting caught conflating them. Sent, stored and read back:
+    two, three and five colours, byte-identical, on `Static`, `Wave`,
+    `Breathing` and `RainbowW`. Looked at by a human: `Static` with red+green+
+    blue showed all red, and `Wave` with the same three showed all red sweeping.
+
+    `Wave` is the load-bearing half of that. A still effect ignoring a list
+    explains itself away; an animated one is where bands or a gradient would be
+    unmistakable, and it drew one colour too.
+
+    Two effects out of the eighteen region 1 reports, so this is confirmed for
+    `Static` and `Wave` and merely likely for the rest. The L3 half is narrower
+    than it sounds too: `Static` was sent 2, 3 and 5 colours, the other three
+    effects fewer.
+
+    So the builder must keep putting the whole list on the wire — the format is
+    the vendor's and a sibling PID may render it — while nothing in this project
+    may offer a multi-colour control for this model. Same distinction as `Flag`.
+    """
+    packet = protocol.build_set_lighting_effect(
+        1, protocol.EFFECT_STATIC,
+        [(255, 0, 0), (0, 255, 0), (0, 0, 255)], flag=0, speed=2)
+
+    assert packet[protocol.PAYLOAD_BASE + 4] == 3, "the count must be the real one"
+    assert list(packet[protocol.PAYLOAD_BASE + 5:protocol.PAYLOAD_BASE + 14]) == \
+        [255, 0, 0, 0, 255, 0, 0, 0, 255], "every colour must reach the wire"
+
+    # At the cap itself, which three colours would not have caught: a builder
+    # that silently stopped after three would satisfy every assertion above.
+    full = [(1, 2, 3), (4, 5, 6), (7, 8, 9), (10, 11, 12), (13, 14, 15)]
+    packet = protocol.build_set_lighting_effect(1, protocol.EFFECT_STATIC, full)
+    assert packet[protocol.PAYLOAD_BASE + 4] == protocol.MAX_COLORS
+    end = protocol.PAYLOAD_BASE + 5 + 3 * protocol.MAX_COLORS
+    assert list(packet[protocol.PAYLOAD_BASE + 5:end]) == list(range(1, 16))
+    assert packet[end] == 0, "nothing may trail the last colour"
+
+    # The cap is the vendor's own: its Windows app refuses to send a sixth.
+    try:
+        protocol.build_set_lighting_effect(
+            1, protocol.EFFECT_STATIC, [(1, 1, 1)] * (protocol.MAX_COLORS + 1))
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("six colours should have been refused")
+
+
 # --- CLASS_MACRO (6), read-only ---------------------------------------------
 
 def test_get_macro_id_list_probe():
