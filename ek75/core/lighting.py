@@ -174,6 +174,36 @@ class Session:
                   if resp is not None else None)
         return {"ids": ids, "active": active}
 
+    def read_macros(self):
+        """Which macros this keyboard holds. Returns {"ids": [...] or None}.
+
+        None means the command went unanswered, which is a different fact from
+        an empty list and is kept distinguishable: this keyboard's device
+        profile does not mention macros at all, and `PWR_CMD_TIME_2_DIM` is
+        already a precedent for a command it simply ignores. "No macros" and
+        "no macro support" should not be printed as the same thing.
+
+        Read-only. Creating, naming and writing macros are all writes and none
+        of them is implemented — see PROTOCOL.md's CLASS_MACRO section.
+        """
+        data = device.get_multipacket(
+            self.fd, 0, protocol.CLASS_MACRO, protocol.MCO_CMD_ID_LIST)
+        if data is None:
+            return {"ids": None}
+        return {"ids": protocol.parse_macro_id_list(data)}
+
+    def read_macro_data(self, macro_id):
+        """One macro's recorded bytes, or None if unanswered.
+
+        Two-byte length, because a macro can be longer than a single byte could
+        describe. The bytes' meaning is not decoded here and is not documented
+        anywhere this project has access to — a caller gets the size and the
+        raw content, which is what can be shown honestly.
+        """
+        return device.get_multipacket(
+            self.fd, 0, protocol.CLASS_MACRO, protocol.MCO_CMD_MEMORY,
+            args=bytes([macro_id]), width=2)
+
     # --- writes --------------------------------------------------------------
 
     def set_effect(self, region_id, effect, colors, flag=0, speed=0):

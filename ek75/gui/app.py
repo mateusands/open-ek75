@@ -17,7 +17,7 @@ from .controller import Controller
 from .pages.home import HomePage
 from .pages.lighting import LightingPage
 from .pages.keys import keys_page
-from .pages.todo import macros_page
+from .pages.macros import macros_page
 
 NAV = [
     ("home", "⌂", "nav_home"),

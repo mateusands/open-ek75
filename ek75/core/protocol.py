@@ -764,3 +764,54 @@ def parse_active_profile_response(resp):
     of the two filled in is what would decide it.
     """
     return resp[HDR_PROFILE]
+
+
+# --- CLASS_MACRO subcommands (tgdevice.js: CLASS_MACRO_CMD_LIST) ------------
+MCO_CMD_SOTRAGE_INFO = 0               # declared by the vendor, never sent [sic]
+MCO_CMD_ID_LIST = 1                    # implemented (read)
+MCO_CMD_CREATE = 2                     # write, persistent
+MCO_CMD_DELETE = 3                     # write, persistent
+MCO_CMD_NAME = 4                       # the vendor reads it and discards it
+MCO_CMD_MEMORY = 5                     # implemented (read); the SET is not
+MCO_CMD_MINI_DELAY = 6                 # declared by the vendor, never sent
+
+
+def build_get_macro_id_list_probe(profile_id=0):
+    """Port of tgdevice.js `GetMacroIdList` — a GetMultiPacketCmd probe.
+
+    ProfileId 0, like the LED and profile id lists: which macros exist is not a
+    question about one profile.
+    """
+    return build_multipacket_probe(profile_id, CLASS_MACRO, MCO_CMD_ID_LIST)
+
+
+def parse_macro_id_list(data):
+    """Drop every zero — `DataArray.filter(A => 0 !== A)`, verbatim.
+
+    The third id list over this transport and the third post-processing rule.
+    `parse_led_region_id_list` collapses ids 0 and 1; `parse_profile_id_list`
+    filters nothing at all; this one drops zeros. A test asserts all three
+    disagree on one shared input, because the temptation to write any of them by
+    analogy with its neighbour is exactly what that test exists to defeat.
+    """
+    return [value for value in data if value != 0]
+
+
+def build_get_macro_data_probe(macro_id, profile_id=0):
+    """Port of `GetMacroData` — `GetMultiPacketCmd(0, CLASS_MACRO, 5|GET,
+    [macroId], out, 2)`.
+
+    First command here to pass GetMultiPacketCmd an argument, and the only one
+    so far to use a two-byte length: a macro's data can exceed the 255 bytes a
+    single-byte Total could describe. The id sits at PAYLOAD_BASE and the
+    Total/Offset pairs the chunk requests add come after it — see
+    `build_multipacket_chunk`, which already takes `args` and `width`.
+
+    CONFIRMED ON HARDWARE, which the plan for this slice predicted it would not
+    be: it assumed a keyboard with no macros would leave the combination
+    untestable. This unit reports one macro and returned its 27 bytes, so the
+    argument-plus-two-byte-length path is exercised end to end rather than only
+    by the byte-match tests.
+    """
+    return build_multipacket_probe(profile_id, CLASS_MACRO, MCO_CMD_MEMORY,
+                                   args=bytes([_byte("macro_id", macro_id)]))

@@ -1352,6 +1352,83 @@ this hardware either. That is a slice of its own, not a detail to bolt on here.
 still pointless until a second profile exists, and it is still a byte this
 hardware has never been sent. Both reasons have to stop applying, not one.
 
+## `CLASS_MACRO` (6) — reading what is stored
+
+Implemented **read-only**, and it turned up something the project did not
+expect: **this keyboard has a macro on it.**
+
+    GetMacroIdList  GetMultiPacketCmd(profile=0, class=6, cmd=1|GET, args=null, width=1)
+                    -> DataArray with every zero dropped
+
+    GetMacroData    GetMultiPacketCmd(profile=0, class=6, cmd=5|GET,
+                                      args=[macroId], width=2)
+                    -> DataArray, verbatim
+
+The device profile `0101.json` does not contain the word "macro", so the profile
+would have said this keyboard has no macros. It has one, and only the keyboard
+knows — the same lesson as the 23 key-map divergences, from a different class.
+
+### Three id lists over one transport, decoded three ways
+
+    LED_CMD_ID_LIST   collapses ids 0 and 1 into whichever appears first
+    PFL_CMD_ID_LIST   filters nothing at all
+    MCO_CMD_ID_LIST   drops every zero
+
+Same command family, same multi-packet transport, three different rules in the
+vendor's own driver. This is the clearest argument in the project against
+porting one of these by analogy with its neighbour; a test asserts all three
+disagree on one shared input rather than describing the difference in prose.
+
+### `GetMacroData` exercises a transport combination nothing else does
+
+It is the only command here that passes `GetMultiPacketCmd` an **argument** and
+uses a **two-byte** length. The id sits at `PAYLOAD_BASE`, and the Total and
+Offset fields the chunk requests add follow it, two bytes each, big-endian:
+
+    00 | 35 | 06 | 85 | 00 | 00 | 03 | 00 64 | 00 00
+                                     id   total   offset
+    HDR_SIZE = chunk + args + 2*width = 48 + 1 + 4 = 53
+
+Confirmed on hardware, which was not expected — the plan for this slice assumed
+a keyboard with no macros would leave the combination untestable, and said so.
+
+### What is stored, and what is not claimed about it
+
+```
+macros:   [1]
+          1: 27 bytes  04 e0 0a 80 05 e0 0b 09 5e 04 e0 0a 6d
+                       05 e0 0b 07 9d 04 e0 0a 5f 05 e0 0b 04 71
+```
+
+27 bytes is 3 x 9, and the groups are visibly regular:
+
+    04 e0 0a XX      05 e0 0b YY ZZ      (x3)
+
+**The format is not decoded and no meaning is claimed for it.** The vendor's web
+driver passes macro data straight through — `SetMacroData` hands its argument to
+`SetMultiPacketCmd` untouched — and the code that *builds* it lives in the
+site's UI layer, which is not among the files in `docs/vendor-reference/`. The
+repeating structure is recorded because it is reproducible and because whoever
+implements the write half will want it, not because it has been understood.
+(0xE0 is the HID usage for Left Ctrl, which may be a clue or may be a
+coincidence; nothing here rests on it.)
+
+### Deliberately not ported
+
+- **`MCO_CMD_SOTRAGE_INFO` (0)** and **`MCO_CMD_MINI_DELAY` (6)** appear exactly
+  once each in `tgdevice.js` — inside the enum that declares them. The vendor's
+  own driver never sends either, so there is no reference packet and building
+  one would be guessing.
+- **`GetMacroName` (`MCO_CMD_NAME|GET`)** exists and the vendor **discards the
+  reply**: it reads, ignores the result on both the success and the failure
+  path, and returns the synthesised string `` `Macro ${id}` ``. Porting a read
+  whose own author does not trust its output is guessing with extra steps. The
+  GUI shows `Macro N` for exactly the reason the vendor does, and says so.
+- **Every macro write** — `MCO_CMD_CREATE`, `MCO_CMD_DELETE`,
+  `MCO_CMD_MEMORY|SET`, `MCO_CMD_NAME|SET`. All persistent, all going through
+  `SetMultiPacketCmd`, a transport this project has never sent, and all of them
+  needing the data format above, which is not decoded.
+
 ## What is not implemented yet
 
 - **Multi-colour effects** (anything needing `N > 1` in the colour list) —
@@ -1377,8 +1454,11 @@ hardware has never been sent. Both reasons have to stop applying, not one.
   `PFL_CMD_ACTIVE|SET`, `PFL_CMD_RESET`. The two reads are done and say this
   keyboard holds exactly one profile; see `CLASS_PROFILE` above for why
   creating the other two is its own slice.
+- **Every `CLASS_MACRO` write**, and the macro data format itself — see
+  `CLASS_MACRO` above. The two reads are done and this keyboard reports one
+  stored macro.
 - **Everything outside `CLASS_LIGHTING` and the two `CLASS_POWER` reads**:
-  `CLASS_BUTTON`, `CLASS_MACRO`, `CLASS_SENSOR`/`CLASS_MAGNETIC_AXIS` (this
+  `CLASS_BUTTON`, `CLASS_SENSOR`/`CLASS_MAGNETIC_AXIS` (this
   model may not be Hall-effect, but the class exists in the shared
   framework), `CLASS_AUDIO`, `CLASS_LCD`, `CLASS_TEST`. Of `CLASS_POWER`, the
   two reads are done; what remains there is `TIME_2_DIM` (this keyboard does not

@@ -75,6 +75,27 @@ STRINGS = {
         "backup_saved": "Backed up to {path}",
         "backup_failed": "Backup failed: {error}",
         "restored": "Restored from {path}",
+        "macros_blurb": ("Read-only. What this keyboard reports it has stored — "
+                          "the vendor's\ndevice profile does not mention macros "
+                          "at all, so this is the only\nplace the answer comes "
+                          "from."),
+        "macros_stored": "Stored on the keyboard",
+        "macros_one": "Macro {id}",
+        "macros_size": "{bytes} bytes recorded",
+        "macros_no_data": "The keyboard listed this macro but did not send its data.",
+        "macros_none": "This keyboard reports no stored macros.",
+        "macros_unsupported": ("This keyboard did not answer the macro commands "
+                                "at all. That is a different thing from having "
+                                "none: the command class exists in the shared "
+                                "firmware, and this model may simply not "
+                                "implement it."),
+        "macros_writes": ("The bytes are shown raw because they have not been "
+                           "decoded. The vendor's\ndriver passes macro data "
+                           "straight through, and the code that builds it is "
+                           "not\namong the files this project has — a guess at "
+                           "the keystrokes would be an\ninvented format. "
+                           "Creating, naming and recording macros are writes, "
+                           "and\nnone of them is implemented."),
         "keys_blurb": ("What each key does, read from the keyboard itself — the "
                         "vendor's\nprofile disagrees with this hardware on 23 "
                         "assignments. Click a key to\nsee it, then assign it "
@@ -143,12 +164,6 @@ STRINGS = {
             "The keyboard's HID node is root-only on this system.\n\n"
             "Install the udev rule once, then replug the keyboard:\n"
             "    sudo sh packaging/install.sh"
-        ),
-        "macros_todo": (
-            "Macros need CLASS_MACRO, which is not ported yet.\n\n"
-            "MacroCreate / SetMacroData / GetMacroIdList exist in\n"
-            "docs/vendor-reference/tgdevice.js and use the same multi-packet\n"
-            "transfer this project already implements for the region list."
         ),
         "effects": {
             # The official software's English labels, from LangLib.dll
@@ -254,6 +269,26 @@ STRINGS = {
         "backup_saved": "Backup salvo em {path}",
         "backup_failed": "Falha no backup: {error}",
         "restored": "Restaurado de {path}",
+        "macros_blurb": ("Somente leitura. O que este teclado reporta ter "
+                          "guardado — o perfil de\ndispositivo do fabricante nem "
+                          "menciona macros, então esta é a única\nfonte da "
+                          "resposta."),
+        "macros_stored": "Guardadas no teclado",
+        "macros_one": "Macro {id}",
+        "macros_size": "{bytes} bytes gravados",
+        "macros_no_data": "O teclado listou esta macro mas não enviou os dados dela.",
+        "macros_none": "Este teclado não reporta nenhuma macro guardada.",
+        "macros_unsupported": ("Este teclado não respondeu aos comandos de macro. "
+                                "Isso é diferente de não ter nenhuma: a classe de "
+                                "comando existe no firmware compartilhado, e este "
+                                "modelo pode simplesmente não implementá-la."),
+        "macros_writes": ("Os bytes aparecem crus porque não foram decodificados. "
+                           "O driver do\nfabricante repassa os dados da macro sem "
+                           "tocar, e o código que os monta não\nestá entre os "
+                           "arquivos que este projeto tem — um palpite sobre as "
+                           "teclas\nseria um formato inventado. Criar, nomear e "
+                           "gravar macros são escritas, e\nnenhuma delas está "
+                           "implementada."),
         "keys_blurb": ("O que cada tecla faz, lido do próprio teclado — o perfil "
                         "do\nfabricante discorda deste hardware em 23 atribuições. "
                         "Clique numa tecla\npara ver, e então atribua outra coisa "
@@ -323,12 +358,6 @@ STRINGS = {
             "O nó HID do teclado é acessível só por root neste sistema.\n\n"
             "Instale a regra udev uma vez e replugue o teclado:\n"
             "    sudo sh packaging/install.sh"
-        ),
-        "macros_todo": (
-            "Macros dependem de CLASS_MACRO, ainda não portada.\n\n"
-            "MacroCreate / SetMacroData / GetMacroIdList existem em\n"
-            "docs/vendor-reference/tgdevice.js e usam a mesma transferência\n"
-            "multi-pacote que este projeto já implementa para a lista de regiões."
         ),
         "effects": {
             # Verbatim from the official software's Brazilian Portuguese string

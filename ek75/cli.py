@@ -191,6 +191,21 @@ def cmd_probe(args):
             print("          (only one profile exists; the extra slots the "
                   "vendor app shows must be created first)")
 
+        macros = session.read_macros()
+        if macros["ids"] is None:
+            print("macros:   no reply — this keyboard does not answer CLASS_MACRO")
+        elif not macros["ids"]:
+            print("macros:   none stored")
+        else:
+            print(f"macros:   {macros['ids']}")
+            for macro_id in macros["ids"]:
+                data = session.read_macro_data(macro_id)
+                if data is None:
+                    print(f"          {macro_id}: no reply")
+                else:
+                    print(f"          {macro_id}: {len(data)} bytes  "
+                          f"{data.hex(' ')}")
+
         ids, source = session.region_ids()
         print(f"regions: {ids}   (source: {source})")
         for region in ids:

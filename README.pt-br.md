@@ -125,19 +125,29 @@ deixar um teclado físico num estado do qual não se sai.
 *Implementado, somente leitura*: nível de bateria e temporizador de suspensão,
 o mapa de teclas (`keys` — o que cada tecla faz nas duas camadas, lido do
 teclado e não do perfil do fabricante, que discorda deste hardware em 23
-atribuições) e quais perfis existem e qual está ativo (`probe`).
+atribuições), quais perfis existem e qual está ativo, e as macros guardadas
+(`probe`).
 
-*Implementado, e escreve*: o `backup` agora grava o mapa de teclas junto com a
-iluminação, e o `restore` devolve os dois — então um teclado cujas teclas foram
-alteradas pelo programa de Windows do fabricante pode voltar a um estado que
-você salvou. Use `--keys-only` ou `--lighting-only` para mexer só em um deles.
-A saída de emergência, se algo der errado, está no próprio teclado:
-**`Fn`+`Esc` é um reset de fábrica**, ligado no firmware, que não depende de
-nada deste software.
+Esta última merece uma frase: o perfil de dispositivo da Dareu não contém a
+palavra "macro", e o teclado em que isto foi construído tem uma guardada mesmo
+assim. Os bytes aparecem crus porque o formato não foi decodificado — o código
+que os monta não está em nenhum arquivo do fabricante que este projeto tem, e um
+palpite sobre as teclas seria um formato inventado.
 
-**Não implementado**: mapas de cor por tecla, escolher uma *nova* atribuição de
-tecla (o `backup`/`restore` só devolve o que o seu próprio teclado reportou),
-macros, e criar ou trocar de perfil. Este último merece ser dito sem rodeios: o
+*Implementado, e escreve*: a iluminação, e **remapear uma tecla** pela página
+Teclas da interface — escolha a tecla, escolha a camada, e atribua outra tecla
+(com Ctrl/Shift/Alt/Win se quiser), uma tecla de mídia, ou o que outra tecla do
+seu teclado já faz. O `backup` grava o mapa de teclas junto com a iluminação e o
+`restore` devolve os dois; use `--keys-only` ou `--lighting-only` para mexer só
+em um deles.
+
+Nada é gravado antes de existir um backup do mapa, e duas teclas nunca podem ser
+remapeadas: as que carregam o `Fn` e o reset de fábrica. Juntas elas são o
+**`Fn`+`Esc`, um reset de fábrica embutido no firmware** — o caminho de volta que
+não depende deste software, e que remapear qualquer uma das duas destruiria.
+
+**Não implementado**: mapas de cor por tecla, gravar ou editar macros, e criar
+ou trocar de perfil. Este último merece ser dito sem rodeios: o
 aplicativo oficial do Windows mostra Perfil 1/2/3, e este teclado reporta
 exatamente um. Os outros dois não estão escondidos — eles não existem, e
 criá-los é uma escrita persistente cujo desfazer nunca foi testado. A interface

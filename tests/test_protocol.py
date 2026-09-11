@@ -1313,6 +1313,92 @@ def test_a_backup_written_before_keys_existed_still_loads():
         assert state.load_keys(fresh) is None
 
 
+# --- CLASS_MACRO (6), read-only ---------------------------------------------
+
+def test_get_macro_id_list_probe():
+    """Port of `GetMacroIdList` — GetMultiPacketCmd(0, CLASS_MACRO, 1|GET, null).
+
+    Expected bytes read off the vendor source, not off the builder:
+      00 status | 01 size | 06 class | 81 cmd (1 | GET) | 00 profile
+    """
+    expected = _padded(bytes.fromhex("0001068100"))
+    assert protocol.build_get_macro_id_list_probe() == expected
+
+
+def test_three_id_lists_over_one_transport_are_decoded_three_ways():
+    """The clearest reason in this project not to port by analogy.
+
+    `LED_CMD_ID_LIST`, `PFL_CMD_ID_LIST` and `MCO_CMD_ID_LIST` all ride
+    GetMultiPacketCmd, all return a byte array of ids, and all post-process it
+    differently in the vendor's own driver:
+
+        LED      collapses ids 0 and 1 into whichever appears first
+        PROFILE  filters nothing at all
+        MACRO    drops every zero  (`DataArray.filter(x => x !== 0)`)
+
+    Asserted on one shared input so the difference is a fact rather than three
+    separate descriptions that can drift apart.
+    """
+    shared = bytes([0, 1, 0, 4, 0, 7])
+    assert protocol.parse_led_region_id_list(shared) == [0, 4, 7]
+    assert protocol.parse_profile_id_list(shared) == [0, 1, 0, 4, 0, 7]
+    assert protocol.parse_macro_id_list(shared) == [1, 4, 7]
+
+    assert protocol.parse_macro_id_list(b"") == []
+    assert protocol.parse_macro_id_list(bytes([0, 0, 0])) == []
+
+
+def test_get_macro_data_probe_carries_the_macro_id_as_an_argument():
+    """`GetMacroData` is the first command here to use GetMultiPacketCmd's
+    `args` — `GetMultiPacketCmd(0, CLASS_MACRO, 5|GET, [macroId], out, 2)`.
+
+    The id goes at PAYLOAD_BASE, before the Total/Offset fields that the chunk
+    requests then write after it:
+      00 status | 01 size | 06 class | 85 cmd (5 | GET) | 00 profile | 00 pad
+      03 macroId
+    """
+    expected = _padded(bytes.fromhex("00010685" + "0000" + "03"))
+    assert protocol.build_get_macro_data_probe(3) == expected
+
+
+def test_macro_data_chunks_place_total_and_offset_after_the_macro_id():
+    """width=2 AND one argument byte, a combination nothing has exercised live.
+
+    The hardware does answer — this unit stores one macro and returned its 27
+    bytes, so the combination is not untested live. But 27 bytes is a *single*
+    chunk: the offset arithmetic below, the second chunk request and the
+    two-byte length decoding are still reached by nothing but these packets.
+    So they are spelled out rather than trusted to the parameters lining up.
+
+    Total and Offset are two bytes each, big-endian, starting right after the
+    one argument byte — PAYLOAD_BASE+1 — and HDR_SIZE covers
+    chunk + args + 2*width = 48 + 1 + 4 = 53 (0x35):
+
+      00 | 35 | 06 | 85 | 00 | 00 | 03 | 00 64 | 00 00
+                                      id  total   offset
+    """
+    got = protocol.build_multipacket_chunk(
+        profile_id=0, cmd_class=protocol.CLASS_MACRO,
+        command=protocol.MCO_CMD_MEMORY, total=0x0064, offset=0,
+        chunk_len=48, args=bytes([3]), width=2)
+    assert got == _padded(bytes.fromhex("0035068500" + "00" + "03"
+                                         + "0064" + "0000"))
+
+    # A non-zero offset moves only the second pair.
+    got = protocol.build_multipacket_chunk(
+        profile_id=0, cmd_class=protocol.CLASS_MACRO,
+        command=protocol.MCO_CMD_MEMORY, total=0x0064, offset=0x0030,
+        chunk_len=0x34, args=bytes([3]), width=2)
+    assert got == _padded(bytes.fromhex("0039068500" + "00" + "03"
+                                         + "0064" + "0030"))
+
+    # Where the reply's payload starts, and where the total is read from.
+    assert protocol.multipacket_chunk_offset(nargs=1, width=2) == \
+        protocol.PAYLOAD_BASE + 1 + 4
+    reply = _padded(bytes.fromhex("02" + "0000000000" + "03" + "0164"))
+    assert protocol.parse_multipacket_total(reply, nargs=1, width=2) == 0x0164
+
+
 # --- CLASS_PROFILE (5), read-only -------------------------------------------
 
 def test_get_profile_id_list_probe():
