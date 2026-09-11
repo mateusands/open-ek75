@@ -1591,7 +1591,7 @@ Offset fields the chunk requests add follow it, two bytes each, big-endian:
 Confirmed on hardware, which was not expected — the plan for this slice assumed
 a keyboard with no macros would leave the combination untestable, and said so.
 
-### What is stored, and what is not claimed about it
+### What is stored, and what it decodes to
 
 ```
 macros:   [1]
@@ -1599,18 +1599,40 @@ macros:   [1]
                        05 e0 0b 07 9d 04 e0 0a 5f 05 e0 0b 04 71
 ```
 
-27 bytes is 3 x 9, and the groups are visibly regular:
+**Decoded.** The web driver passes macro data straight through — `SetMacroData`
+hands its argument to `SetMultiPacketCmd` untouched — and the code that *builds*
+it lives in the site's UI layer, outside `docs/vendor-reference/`. It was
+recovered instead from the Windows app's recording page,
+`OEMDriver.Pages.PageMacroTg::ParseKeyboardData`, walked instruction by
+instruction. It is a TLV opcode stream:
 
-    04 e0 0a XX      05 e0 0b YY ZZ      (x3)
+    0x04 <usage>                 key down
+    0x05 <usage>                 key up
+    0x0A <ms>                    delay, 1 byte (0-255)
+    0x0B <ms hi><ms lo>          delay, 2 bytes big-endian (0-65535)
+    0x0C <hi><mid><lo>           delay, 3 bytes big-endian (0-16777215)
+    0x0D <min hi><lo><max hi><lo> random delay, 2+2 bytes big-endian
 
-**The format is not decoded and no meaning is claimed for it.** The vendor's web
-driver passes macro data straight through — `SetMacroData` hands its argument to
-`SetMultiPacketCmd` untouched — and the code that *builds* it lives in the
-site's UI layer, which is not among the files in `docs/vendor-reference/`. The
-repeating structure is recorded because it is reproducible and because whoever
-implements the write half will want it, not because it has been understood.
-(0xE0 is the HID usage for Left Ctrl, which may be a clue or may be a
-coincidence; nothing here rests on it.)
+`<usage>` is a real USB HID Keyboard-page usage, confirmed independently:
+`RawInputDataArrived` runs every captured key through `VirtualKeyCorrection`
+then `ASCallToUsageId` before it ever reaches the parser above — the same
+public table `keymap.HID_KEYS` already carries. Modifiers are spelled out as
+their own usages, `0xE0`-`0xE7` — a *different* encoding from `CLASS_KEY`'s
+`CombineKey`, which packs them into a `data[0]` bitmask instead. Two encodings
+for the same physical key, in two corners of one protocol.
+
+Decoding this keyboard's 27 bytes with that table consumes all of them, with
+nothing left over:
+
+    KEYDOWN Left Ctrl -> wait 128ms -> KEYUP -> wait 2398ms
+    KEYDOWN Left Ctrl -> wait 109ms -> KEYUP -> wait 1949ms
+    KEYDOWN Left Ctrl -> wait  95ms -> KEYUP -> wait 1137ms
+
+Three taps of Left Ctrl a couple of seconds apart — an anti-idle macro. An
+earlier draft of this section guessed the bytes were length-prefixed records
+(27 = 4+5+4+5+4+5, each group's first byte equal to its own length); that was
+arithmetic on a coincidence, not a decode, and it is wrong. `docs/investigations
+/macros.md` keeps the wrong guess on the record next to the correction.
 
 ### Deliberately not ported
 
