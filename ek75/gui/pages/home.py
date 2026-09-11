@@ -308,57 +308,9 @@ class HomePage(ttk.Frame):
             filetypes=[("JSON", "*.json"), ("All files", "*")])
         if not path:
             return
-
-        # Read on the Tk thread, so its failures are this function's problem —
-        # the controller only converts exceptions raised inside a job. The file
-        # dialog will happily hand back any .json on the disk, and a file that
-        # is not a backup must report an error, not kill the callback.
-        try:
-            keys = state.load_keys(path)             # None for an older backup
-            regions = state.load(path)
-        except (OSError, ValueError, KeyError) as error:
-            # Not `app.report_error`: that one reads `error.kind` and speaks
-            # about the device — disconnected, permissions. This is a file the
-            # user picked that is not a backup, which needs a different message
-            # and would otherwise crash the reporter itself.
-            self.app.set_status(
-                i18n.t("backup_unreadable", name=os.path.basename(path),
-                       detail=type(error).__name__),
-                kind="error")
-            return
-
-        # Said before the job starts, not after it ends: writing 166 assignments
-        # takes about 17 seconds, and 17 seconds of a live-but-silent window is
-        # indistinguishable from a hang.
-        self.app.set_status(
-            i18n.t("restoring_keys" if keys else "restoring"), kind="info")
+        # `App.apply_saved` owns reading the file, the worker job, the
+        # 17-second warning and the per-half failure report — the Profiles page
+        # does the same thing to the same format and one copy of that reporting
+        # is one place to fix it.
         self._set_busy(True)
-
-        def work(session):
-            lighting_results = session.restore(regions)
-            key_results = session.restore_key_map(keys) if keys else []
-            return lighting_results, key_results
-
-        self.controller.submit("restore", work,
-                               on_done=lambda r: self._on_restored(path, *r),
-                               on_error=self._on_restore_failed)
-
-    def _on_restored(self, path, lighting_results, key_results):
-        """Report the two halves separately — one word cannot cover both."""
-        self._set_busy(False)
-        self.app.on_restored(path)
-        failed_regions = [r for r, ok in lighting_results if not ok]
-        failed_keys = [k for k, ok in key_results if not ok]
-        if not failed_regions and not failed_keys:
-            return
-        # A partial key restore leaves the keyboard between two states. It is
-        # recoverable — the file is still on disk, so running this again is the
-        # fix — and `Fn`+`Esc` is the factory reset underneath that.
-        self.app.set_status(
-            i18n.t("restore_partial",
-                   regions=len(failed_regions), keys=len(failed_keys)),
-            kind="warn")
-
-    def _on_restore_failed(self, error):
-        self._set_busy(False)
-        self.app.report_error(error)
+        self.app.apply_saved(path, on_settled=lambda: self._set_busy(False))

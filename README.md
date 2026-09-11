@@ -141,8 +141,14 @@ remapped: whichever ones carry `Fn` and the factory reset. Together they are
 **`Fn`+`Esc`, a factory reset built into the firmware** — the way back that needs
 nothing from this software, and which remapping either half would destroy.
 
+**Profiles** are named files on this machine — `open-ek75 profiles`, or the
+Profiles page. That is not a workaround for the device's single profile: it is
+where the vendor's own app keeps its Profile 1/2/3 too, which was settled by
+decompiling both of Dareu's implementations. What it does not give is switching
+with a key on the keyboard.
+
 **Not implemented**: per-key colour maps, recording or editing macros, and
-creating or switching profiles. The last one is worth being blunt about: the official
+creating a second profile in the device's own memory. The last one is worth being blunt about: the official
 Windows app shows Profile 1/2/3, and this keyboard reports exactly one. The
 other two are not hidden — they do not exist, and creating them is a persistent
 write whose undo has never been tested. The GUI shows unimplemented features as

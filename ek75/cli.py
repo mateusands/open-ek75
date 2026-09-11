@@ -7,7 +7,7 @@ import argparse
 import sys
 import time
 
-from .core import device, keymap, layout, lighting, protocol, state
+from .core import device, keymap, layout, lighting, profiles, protocol, state
 
 # Regions known on the hardware this was reverse-engineered against (a Husky
 # HTG-series unit, PID 0101). See PROTOCOL.md before assuming these are
@@ -119,9 +119,18 @@ def cmd_backup(args):
     print(f"\nsaved to {args.path}")
 
 
-def cmd_restore(args):
-    regions = {} if args.keys_only else state.load(args.path)
-    keys = None if args.lighting_only else state.load_keys(args.path)
+def _apply_saved(path, keys_only=False, lighting_only=False, source="backup"):
+    """Put a saved file back on the keyboard, and report both halves.
+
+    Shared by `restore` and `profiles apply` because they are the same act on
+    the same format — a profile IS a backup (see core/profiles.py). Two copies
+    of this would mean two places to fix the day a partial restore is reported
+    wrongly, which is the report that matters most.
+
+    Returns the process exit code.
+    """
+    regions = {} if keys_only else state.load(path)
+    keys = None if lighting_only else state.load_keys(path)
     failed = 0
     with lighting.Session.open() as session:
         for region, ok in session.restore(regions):
@@ -137,14 +146,12 @@ def cmd_restore(args):
                 print(f"region {region}: FAILED restoring to {detail}",
                       file=sys.stderr)
 
-        if keys is None and not args.lighting_only:
-            print("no key map in this backup; nothing to restore for keys "
-                  "(back it up with 'backup' first)", file=sys.stderr)
-            if args.keys_only:
+        if keys is None and not lighting_only:
+            print(f"no key map in this {source}; nothing to restore for keys "
+                  f"(back it up with 'backup' first)", file=sys.stderr)
+            if keys_only:
                 # The user asked for the key map and nothing else, and nothing
                 # happened. Exiting 0 here would tell a script it worked.
-                # Without the flag this is not a failure: the file held only
-                # lighting and all of it was restored.
                 failed += 1
         elif keys:
             results = session.restore_key_map(keys)
@@ -155,6 +162,64 @@ def cmd_restore(args):
                 print(f"key {key_id} layer {layer}: FAILED", file=sys.stderr)
 
     return 1 if failed else 0
+
+
+def cmd_restore(args):
+    return _apply_saved(args.path, keys_only=args.keys_only,
+                        lighting_only=args.lighting_only)
+
+
+def cmd_profiles(args):
+    """Named configurations kept on this machine — the vendor keeps them here
+    too; see core/profiles.py."""
+    if args.action != "list" and not args.name:
+        print(f"'profiles {args.action}' needs a name", file=sys.stderr)
+        return 2
+
+    if args.action == "list":
+        names = profiles.list_profiles()
+        if not names:
+            print("no profiles saved yet  (open-ek75 profiles save <name>)")
+        for name in names:
+            print(name)
+        return 0
+
+    try:
+        name = profiles.clean_name(args.name)
+    except ValueError as error:
+        print(f"{error}", file=sys.stderr)
+        return 2
+
+    if args.action == "save":
+        keys = None
+        with lighting.Session.open() as session:
+            regions = session.snapshot(range(args.scan))
+            profile = layout.load()
+            keys = session.read_key_map([k.id for k in profile.keys])
+        path = profiles.save(name, regions, keys)
+        answered = sum(1 for v in keys.values() if v is not None)
+        print(f"saved {name}: {len(regions)} lighting region(s), "
+              f"{answered} key assignment(s)")
+        print(f"  {path}")
+        return 0
+
+    if args.action == "delete":
+        try:
+            profiles.delete(name)
+        except FileNotFoundError:
+            print(f"no profile called {name!r}", file=sys.stderr)
+            return 1
+        print(f"deleted {name}")
+        return 0
+
+    try:
+        path = profiles.path_for(name)
+        open(path).close()
+    except OSError:
+        print(f"no profile called {name!r}", file=sys.stderr)
+        return 1
+    print(f"applying {name}…")
+    return _apply_saved(path, source="profile")
 
 
 def cmd_probe(args):
@@ -399,6 +464,17 @@ def build_parser():
     p_restore.add_argument("path", nargs="?", default=state.DEFAULT_PATH)
     _only_flags(p_restore)
     p_restore.set_defaults(func=cmd_restore)
+
+    p_profiles = sub.add_parser(
+        "profiles", help="named configurations kept on this machine")
+    p_profiles.add_argument("action",
+                            choices=("list", "save", "apply", "delete"))
+    # `nargs="?"` so `profiles list` needs no name. A name that argparse would
+    # read as an option is rejected by core.profiles.clean_name with a message
+    # about profiles, rather than by argparse with one about arguments.
+    p_profiles.add_argument("name", nargs="?")
+    p_profiles.add_argument("--scan", type=int, default=8)
+    p_profiles.set_defaults(func=cmd_profiles)
 
     p_gui = sub.add_parser("gui", help="open the graphical interface (tkinter)")
     p_gui.set_defaults(func=cmd_gui)

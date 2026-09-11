@@ -146,8 +146,14 @@ remapeadas: as que carregam o `Fn` e o reset de fábrica. Juntas elas são o
 **`Fn`+`Esc`, um reset de fábrica embutido no firmware** — o caminho de volta que
 não depende deste software, e que remapear qualquer uma das duas destruiria.
 
-**Não implementado**: mapas de cor por tecla, gravar ou editar macros, e criar
-ou trocar de perfil. Este último merece ser dito sem rodeios: o
+**Perfis** são arquivos nomeados nesta máquina — `open-ek75 profiles`, ou a
+página Perfis. Isso não é um contorno para o teclado ter um perfil só: é onde o
+app do próprio fabricante guarda o Profile 1/2/3 dele, o que foi resolvido
+decompilando as duas implementações da Dareu. O que não dá é trocar por uma
+tecla do teclado.
+
+**Não implementado**: mapas de cor por tecla, gravar ou editar macros, e criar um
+segundo perfil na memória do próprio aparelho. Este último merece ser dito sem rodeios: o
 aplicativo oficial do Windows mostra Perfil 1/2/3, e este teclado reporta
 exatamente um. Os outros dois não estão escondidos — eles não existem, e
 criá-los é uma escrita persistente cujo desfazer nunca foi testado. A interface

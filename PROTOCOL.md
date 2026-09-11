@@ -1527,8 +1527,9 @@ sites found.
 
 ### The safe way to ship this feature
 
-Named local profiles. Store several `backup`-format files, let the user pick
-one, apply it with the existing `restore` path. Zero new device writes, zero new
+Named local profiles — **implemented**: `core/profiles.py`, `open-ek75
+profiles`, and the GUI's Profiles page. Several `backup`-format files, the user
+picks one, applied through the existing `restore` path. Zero new device writes, zero new
 packet shapes — and now known to be **what the vendor's own app does**, rather
 than merely a safe substitute for it.
 

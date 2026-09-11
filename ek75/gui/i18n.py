@@ -78,6 +78,25 @@ STRINGS = {
         "color_list_note": ("This effect cycles the list, in order — Breathing "
                              "shows one colour per breath.\nClick a swatch to "
                              "edit it."),
+        "nav_profiles": "Profiles",
+        "profiles_blurb": ("Named configurations, kept on this machine — which is "
+                            "where the vendor's\napp keeps its Profile 1/2/3 too. "
+                            "A profile holds the same two things a\nbackup does: "
+                            "the lighting and the key map."),
+        "profiles_saved": "Saved on this machine",
+        "profiles_none": ("No profiles yet. \"Save current\" stores what the "
+                           "keyboard has right now under a name you choose."),
+        "profiles_apply": "Apply",
+        "profiles_save": "Save current",
+        "profiles_delete": "Delete",
+        "profiles_name_prompt": "Name for this profile:",
+        "profiles_saving": "Reading the keyboard and saving as {name}…",
+        "profiles_saved_ok": "Saved as {name}",
+        "profiles_deleted": "Deleted {name}",
+        "profiles_note": ("Switching is done here, not with a key on the keyboard: "
+                           "that would need a\nsecond profile in the device's own "
+                           "memory, and the command that creates one\nhas never "
+                           "been sent to this hardware. See PROTOCOL.md."),
         "macros_blurb": ("Read-only. What this keyboard reports it has stored — "
                           "the vendor's\ndevice profile does not mention macros "
                           "at all, so this is the only\nplace the answer comes "
@@ -275,6 +294,25 @@ STRINGS = {
         "color_list_note": ("Este efeito percorre a lista, em ordem — o Breathing "
                              "mostra uma cor por respirada.\nClique num "
                              "quadradinho para editá-lo."),
+        "nav_profiles": "Perfis",
+        "profiles_blurb": ("Configurações nomeadas, guardadas nesta máquina — que é "
+                            "onde o app do\nfabricante guarda o Profile 1/2/3 dele "
+                            "também. Um perfil tem as mesmas\nduas coisas que um "
+                            "backup: a iluminação e o mapa de teclas."),
+        "profiles_saved": "Guardados nesta máquina",
+        "profiles_none": ("Nenhum perfil ainda. \"Salvar atual\" guarda o que o "
+                           "teclado tem agora com um nome que você escolher."),
+        "profiles_apply": "Aplicar",
+        "profiles_save": "Salvar atual",
+        "profiles_delete": "Apagar",
+        "profiles_name_prompt": "Nome para este perfil:",
+        "profiles_saving": "Lendo o teclado e salvando como {name}…",
+        "profiles_saved_ok": "Salvo como {name}",
+        "profiles_deleted": "{name} apagado",
+        "profiles_note": ("A troca acontece aqui, não numa tecla do teclado: isso "
+                           "exigiria um segundo\nperfil na memória do aparelho, e o "
+                           "comando que cria um nunca foi enviado\na este hardware. "
+                           "Veja o PROTOCOL.md."),
         "macros_blurb": ("Somente leitura. O que este teclado reporta ter "
                           "guardado — o perfil de\ndispositivo do fabricante nem "
                           "menciona macros, então esta é a única\nfonte da "

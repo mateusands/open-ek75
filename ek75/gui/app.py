@@ -18,12 +18,14 @@ from .pages.home import HomePage
 from .pages.lighting import LightingPage
 from .pages.keys import keys_page
 from .pages.macros import macros_page
+from .pages.profiles import profiles_page
 
 NAV = [
     ("home", "⌂", "nav_home"),
     ("keys", "⌨", "nav_keys"),
     ("lighting", "✺", "nav_lighting"),
     ("macros", "Ⓜ", "nav_macros"),
+    ("profiles", "▤", "nav_profiles"),
 ]
 
 
@@ -98,6 +100,7 @@ class App(tk.Tk):
         self._pages["lighting"] = LightingPage(self._content, self)
         self._pages["keys"] = keys_page(self._content, self)
         self._pages["macros"] = macros_page(self._content, self)
+        self._pages["profiles"] = profiles_page(self._content, self)
         # Always the device page on launch: it is the one that says what is
         # connected and lists the Fn shortcuts, which is what someone opening
         # the app cold most likely wants.
@@ -283,6 +286,60 @@ class App(tk.Tk):
             self.report_error(error)
 
         self.controller.submit("backup", work, on_done=done, on_error=failed)
+
+    def apply_saved(self, path, on_settled=None, label=None):
+        """Put a saved file back — a backup or a profile, which are one format.
+
+        Lives here rather than on a page because two pages do it and the half
+        that is easy to get wrong is the *reporting*: a lighting restore that
+        worked and a key restore that partly failed must not be summarised as
+        one word. Two copies of that would be two places to fix it.
+
+        Returns False when the file could not be read, having already said so.
+        """
+        try:
+            keys = state.load_keys(path)             # None for an older backup
+            regions = state.load(path)
+        except (OSError, ValueError, KeyError) as error:
+            # Not `report_error`: that one reads `error.kind` and speaks about
+            # the device. A file the user picked that is not a backup needs a
+            # different message and would otherwise crash the reporter itself.
+            self.set_status(
+                i18n.t("backup_unreadable", name=os.path.basename(path),
+                       detail=type(error).__name__), kind="error")
+            if on_settled is not None:
+                on_settled()
+            return False
+
+        # Said before the job starts: writing 166 assignments takes about 17
+        # seconds, and a live but silent window that long reads as a hang.
+        self.set_status(
+            label or i18n.t("restoring_keys" if keys else "restoring"),
+            kind="info")
+
+        def work(session):
+            return session.restore(regions), (session.restore_key_map(keys)
+                                               if keys else [])
+
+        def done(results):
+            if on_settled is not None:
+                on_settled()
+            self.on_restored(path)
+            lighting_results, key_results = results
+            bad_regions = [r for r, ok in lighting_results if not ok]
+            bad_keys = [k for k, ok in key_results if not ok]
+            if bad_regions or bad_keys:
+                self.set_status(
+                    i18n.t("restore_partial", regions=len(bad_regions),
+                           keys=len(bad_keys)), kind="warn")
+
+        def failed(error):
+            if on_settled is not None:
+                on_settled()
+            self.report_error(error)
+
+        self.controller.submit("restore", work, on_done=done, on_error=failed)
+        return True
 
     def on_restored(self, path):
         self.set_status(i18n.t("restored", path=path), kind="ok")

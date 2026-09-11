@@ -1401,6 +1401,90 @@ def test_the_packet_carries_every_colour_it_is_handed():
         raise AssertionError("six colours should have been refused")
 
 
+def test_a_profile_name_is_rejected_rather_than_repaired():
+    """Names reach the filesystem and a command line, so they are checked here.
+
+    In `core` and not in a front end: sanitising in the GUI would leave the CLI
+    able to pass anything, and this is the layer both go through.
+
+    **Rejected, not quietly fixed.** Turning `../../.bashrc` into `.bashrc`
+    writes a file the user did not name — a silent wrong answer, which is worse
+    than an error. Two of these came from review and neither is hypothetical:
+
+    - a name starting with `-` is read by argparse as an option, so
+      `open-ek75 profiles apply -game` fails with an unrecognised-argument
+      error that says nothing about profiles;
+    - a whitespace-only name passes any "non-empty" check and creates a file
+      called "   .json" that no one can refer to again.
+
+    Accented letters are allowed. The owner of this hardware writes Portuguese
+    and "Perfil Jogo" is a name someone will use; `str.isalnum()` accepts it.
+    """
+    from ek75.core import profiles
+
+    for good in ("Game", "perfil jogo", "Perfil Jogo", "work_2",
+                 "a-b", "Ação", "1"):
+        assert profiles.clean_name(good) == good.strip(), good
+
+    for bad, why in ((".."           , "the parent directory"),
+                     ("."            , "the current directory"),
+                     ("../../.bashrc", "a traversal"),
+                     ("a/b"          , "a path separator"),
+                     (""             , "empty"),
+                     ("   "          , "whitespace only"),
+                     ("-game"        , "argparse reads it as an option"),
+                     (" -game"       , "the same after stripping"),
+                     ("a\x00b"       , "a NUL"),
+                     ("a\nb"         , "a newline"),
+                     ("x" * 200      , "longer than a filename may be")):
+        try:
+            profiles.clean_name(bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"{bad!r} should have been rejected: {why}")
+
+
+def test_a_profile_is_a_backup_and_an_old_backup_is_a_profile():
+    """One format, so a file written by `backup` can be dropped in as a profile.
+
+    A profile is what the vendor's own GetProfileConfig says it is — for a
+    keyboard, the key map and the lighting — which is exactly what `backup`
+    already records. Two formats would mean two things to keep in step for no
+    gain, and would make the file someone already has useless here.
+    """
+    import tempfile
+    from ek75.core import profiles, state
+
+    regions = {1: {"effect": 2, "flag": 0, "speed": 2,
+                   "colors": [[255, 0, 0], [0, 0, 255]], "brightness": 150}}
+    keys = {(50, 1): {"function_id": 6, "data": [0, 47, 0, 0, 0]}}
+
+    with tempfile.TemporaryDirectory() as tmp:
+        assert profiles.list_profiles(tmp) == []
+
+        profiles.save("Perfil Jogo", regions, keys, directory=tmp)
+        assert profiles.list_profiles(tmp) == ["Perfil Jogo"]
+
+        path = profiles.path_for("Perfil Jogo", directory=tmp)
+        assert state.load(path) == regions          # read by the backup reader
+        assert state.load_keys(path) == keys
+
+        profiles.save("B", regions, None, directory=tmp)
+        assert profiles.list_profiles(tmp) == ["B", "Perfil Jogo"]   # sorted
+
+        profiles.delete("B", directory=tmp)
+        assert profiles.list_profiles(tmp) == ["Perfil Jogo"]
+
+        # Deleting what is not there is an error, not a quiet success: a caller
+        # that mistyped a name must not be told it worked.
+        try:
+            profiles.delete("B", directory=tmp)
+        except FileNotFoundError:
+            pass
+        else:
+            raise AssertionError("deleting a missing profile reported success")
+
+
 # --- CLASS_MACRO (6), read-only ---------------------------------------------
 
 def test_get_macro_id_list_probe():
