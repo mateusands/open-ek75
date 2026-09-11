@@ -187,8 +187,11 @@ class App(tk.Tk):
         path = self.controller.device_path or "?"
         self._header_note.configure(text=path)
         self.set_status(i18n.t("connected", path=path), kind="ok")
-        self._auto_backup()
+        # refresh first: `Controller` runs one job at a time in submission
+        # order, so queueing the automatic backup ahead of it would leave the
+        # device card reading "reading…" behind a 166-key sweep.
         self._pages[self._current].refresh()
+        self._auto_backup()
 
     def request_key_map(self, callback):
         """Call `callback(key_map)` once the map is available, reading it at most
@@ -220,30 +223,73 @@ class App(tk.Tk):
         self.report_error(error)
 
     def _auto_backup(self):
-        """Take one backup the first time this machine connects, never overwrite."""
-        if self._auto_backup_done or os.path.exists(state.DEFAULT_PATH):
-            self._auto_backup_done = True
+        """Take one backup the first time this machine connects, never overwrite.
+
+        "Never overwrite" used to mean "do nothing at all if the file exists",
+        which silently skipped every install that already had one: those files
+        predate key backups, so the key map would never be captured on exactly
+        the machines that had been using this longest. The file existing is
+        still enough to skip the *lighting* half — overwriting a saved setting
+        with the current one is the loss this guard exists to prevent — but a
+        file with no key map in it still gets one. `state.save` carries the
+        lighting forward untouched.
+        """
+        if self._auto_backup_done:
             return
         self._auto_backup_done = True
-        self.backup_to(state.DEFAULT_PATH, automatic=True)
+
+        if not os.path.exists(state.DEFAULT_PATH):
+            self.backup_to(state.DEFAULT_PATH, automatic=True)
+            return
+        try:
+            if state.load_keys(state.DEFAULT_PATH) is not None:
+                return                               # already has both halves
+        except (OSError, ValueError, KeyError):
+            return                                   # unreadable: leave it alone
+        self.backup_to(state.DEFAULT_PATH, automatic=True, keys_only=True)
 
     # --- shared actions used by pages ---------------------------------------
 
-    def backup_to(self, path, automatic=False):
+    def backup_to(self, path, automatic=False, keys_only=False, on_settled=None):
+        """Save the lighting and the key map, the same two halves the CLI saves.
+
+        `keys_only` passes None for the lighting, which `state.save` reads as
+        "nothing to say about it" and carries forward rather than replacing.
+        """
+        key_ids = [k.id for k in self.profile.keys]
+
         def work(session):
-            regions = session.snapshot()
-            state.save(path, regions)
+            # Both reads happen before the file is touched, so a keyboard
+            # unplugged half way through leaves the old backup intact instead of
+            # a file with half a key map in it.
+            regions = None if keys_only else session.snapshot()
+            keys = session.read_key_map(key_ids)
+            state.save(path, regions, keys=keys)
             return path
 
-        self.controller.submit(
-            "backup", work,
-            on_done=lambda saved: self.set_status(
+        def done(saved):
+            if on_settled is not None:
+                on_settled()
+            self.set_status(
                 i18n.t("auto_backup" if automatic else "backup_saved", path=saved),
-                kind="ok"),
-            on_error=self.report_error)
+                kind="ok")
+
+        def failed(error):
+            # `on_settled` runs on both paths or the caller's button stays
+            # disabled for the rest of the session after one unplugged cable.
+            if on_settled is not None:
+                on_settled()
+            self.report_error(error)
+
+        self.controller.submit("backup", work, on_done=done, on_error=failed)
 
     def on_restored(self, path):
         self.set_status(i18n.t("restored", path=path), kind="ok")
+        # The cached map was read before the restore wrote a different one over
+        # it. Dropping it makes the next reader ask the keyboard again; keeping
+        # it would leave the Fn guide describing shortcuts that are no longer
+        # there, which is the failure this project treats as the worst kind.
+        self.key_map = None
         self._pages[self._current].refresh()
 
     def set_status(self, text, kind="info"):

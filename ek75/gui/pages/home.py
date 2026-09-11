@@ -51,6 +51,7 @@ class HomePage(ttk.Frame):
                            ("firmware", i18n.t("device_firmware")),
                            ("battery", i18n.t("device_battery")),
                            ("sleep", i18n.t("device_sleep")),
+                           ("profiles", i18n.t("device_profiles")),
                            ("regions", i18n.t("device_regions"))):
             row = ttk.Frame(info.body, style="Panel.TFrame")
             row.pack(fill="x", pady=2)
@@ -71,10 +72,12 @@ class HomePage(ttk.Frame):
                                                                   pady=(0, 10))
         buttons = ttk.Frame(backup.body, style="Panel.TFrame")
         buttons.pack(anchor="w")
-        ttk.Button(buttons, text=i18n.t("backup"),
-                   command=self._on_backup).pack(side="left", padx=(0, 8))
-        ttk.Button(buttons, text=i18n.t("restore"),
-                   command=self._on_restore).pack(side="left")
+        self._backup_button = ttk.Button(buttons, text=i18n.t("backup"),
+                                          command=self._on_backup)
+        self._backup_button.pack(side="left", padx=(0, 8))
+        self._restore_button = ttk.Button(buttons, text=i18n.t("restore"),
+                                           command=self._on_restore)
+        self._restore_button.pack(side="left")
 
         todo = Card(right, i18n.t("not_implemented"))
         todo.pack(fill="both", expand=True, pady=(12, 0))
@@ -118,6 +121,8 @@ class HomePage(ttk.Frame):
         self.app.request_key_map(self._on_key_map)
 
     def _on_key_map(self, key_map):
+        if not self._alive():
+            return
         if key_map is None:
             self._show_status(i18n.t("fn_needs_device"))
             return
@@ -174,6 +179,34 @@ class HomePage(ttk.Frame):
 
     # --- data ----------------------------------------------------------------
 
+    def _alive(self):
+        """False once this page's widgets are gone.
+
+        A device job can finish after `App._rebuild` has destroyed the page that
+        asked for it — switching language during a read is enough, and a key-map
+        restore takes ~17 s, which is a long time to hold a widget still. The
+        callback then configures a dead widget and Tk raises. Every callback
+        that touches a widget checks this first.
+        """
+        try:
+            return bool(self.winfo_exists())
+        except tk.TclError:                          # the interpreter is going away
+            return False
+
+    def _set_busy(self, busy):
+        """Lock the backup/restore buttons while one of their jobs is running.
+
+        `Controller` runs one job at a time in submission order, so a second
+        click does not corrupt anything — it queues another full 17 s key-map
+        write behind the first, with no sign on screen that anything is
+        happening. Disabling is the honest signal.
+        """
+        if not self._alive():
+            return
+        mode = "disabled" if busy else "normal"
+        for button in (self._backup_button, self._restore_button):
+            button.configure(state=mode)
+
     def refresh(self):
         self._rows["model"].configure(
             text=f"{self.profile.model} / {self.profile.product_name}")
@@ -197,15 +230,22 @@ class HomePage(ttk.Frame):
 
         self._load_fn_shortcuts()
 
+        self._rows["profiles"].configure(text=i18n.t("battery_reading"))
+        self.controller.submit(
+            "read-profiles", lambda session: session.read_profiles(),
+            on_done=self._show_profiles, on_error=self.app.report_error)
+
         self.controller.submit(
             "read-regions", lambda session: session.region_ids(),
-            on_done=lambda payload: self._rows["regions"].configure(
-                text=f"{payload[0]}  ({payload[1]})"),
+            on_done=lambda payload: self._alive() and self._rows[
+                "regions"].configure(text=f"{payload[0]}  ({payload[1]})"),
             on_error=self.app.report_error)
 
     def _show_battery(self, info):
         """`info` is None when the device did not answer — say so rather than
         leaving the row reading "reading…" forever."""
+        if not self._alive():
+            return
         if info is None:
             self._rows["battery"].configure(text=i18n.t("battery_unknown"))
             return
@@ -216,7 +256,30 @@ class HomePage(ttk.Frame):
             text=f"{percent}%" if percent is not None
             else f"{info['level']}/{info['max_level']}")
 
+    def _show_profiles(self, info):
+        """Which profiles the keyboard holds, and which one is live.
+
+        The vendor's Windows app offers Profile 1/2/3 and this keyboard reports
+        one. Saying "1 of 1" and leaving it there would read like a bug in this
+        software, so the row says the other slots have to be created — which is
+        a write this project does not send.
+        """
+        if not self._alive():
+            return
+        ids, active = info["ids"], info["active"]
+        if ids is None and active is None:
+            self._rows["profiles"].configure(text=i18n.t("battery_unknown"))
+            return
+        listed = "?" if ids is None else ", ".join(str(i) for i in ids) or "—"
+        shown = i18n.t("profiles_active", listed=listed,
+                       active="?" if active is None else active)
+        if ids is not None and len(ids) == 1:
+            shown += "  " + i18n.t("profiles_only_one")
+        self._rows["profiles"].configure(text=shown)
+
     def _show_sleep(self, info):
+        if not self._alive():
+            return
         if info is None:
             self._rows["sleep"].configure(text=i18n.t("battery_unknown"))
         elif not info["enabled"]:
@@ -235,7 +298,8 @@ class HomePage(ttk.Frame):
             defaultextension=".json")
         if not path:
             return
-        self.app.backup_to(path)
+        self._set_busy(True)
+        self.app.backup_to(path, on_settled=lambda: self._set_busy(False))
 
     def _on_restore(self):
         path = filedialog.askopenfilename(
@@ -245,10 +309,56 @@ class HomePage(ttk.Frame):
         if not path:
             return
 
-        def work(session):
-            return session.restore(state.load(path))
+        # Read on the Tk thread, so its failures are this function's problem —
+        # the controller only converts exceptions raised inside a job. The file
+        # dialog will happily hand back any .json on the disk, and a file that
+        # is not a backup must report an error, not kill the callback.
+        try:
+            keys = state.load_keys(path)             # None for an older backup
+            regions = state.load(path)
+        except (OSError, ValueError, KeyError) as error:
+            # Not `app.report_error`: that one reads `error.kind` and speaks
+            # about the device — disconnected, permissions. This is a file the
+            # user picked that is not a backup, which needs a different message
+            # and would otherwise crash the reporter itself.
+            self.app.set_status(
+                i18n.t("backup_unreadable", name=os.path.basename(path),
+                       detail=type(error).__name__),
+                kind="error")
+            return
 
-        self.controller.submit(
-            "restore", work,
-            on_done=lambda _r: self.app.on_restored(path),
-            on_error=self.app.report_error)
+        # Said before the job starts, not after it ends: writing 166 assignments
+        # takes about 17 seconds, and 17 seconds of a live-but-silent window is
+        # indistinguishable from a hang.
+        self.app.set_status(
+            i18n.t("restoring_keys" if keys else "restoring"), kind="info")
+        self._set_busy(True)
+
+        def work(session):
+            lighting_results = session.restore(regions)
+            key_results = session.restore_key_map(keys) if keys else []
+            return lighting_results, key_results
+
+        self.controller.submit("restore", work,
+                               on_done=lambda r: self._on_restored(path, *r),
+                               on_error=self._on_restore_failed)
+
+    def _on_restored(self, path, lighting_results, key_results):
+        """Report the two halves separately — one word cannot cover both."""
+        self._set_busy(False)
+        self.app.on_restored(path)
+        failed_regions = [r for r, ok in lighting_results if not ok]
+        failed_keys = [k for k, ok in key_results if not ok]
+        if not failed_regions and not failed_keys:
+            return
+        # A partial key restore leaves the keyboard between two states. It is
+        # recoverable — the file is still on disk, so running this again is the
+        # fix — and `Fn`+`Esc` is the factory reset underneath that.
+        self.app.set_status(
+            i18n.t("restore_partial",
+                   regions=len(failed_regions), keys=len(failed_keys)),
+            kind="warn")
+
+    def _on_restore_failed(self, error):
+        self._set_busy(False)
+        self.app.report_error(error)

@@ -23,9 +23,10 @@ STRINGS = {
         "from_windows_app": "from the official Windows app",
         "direction_inert": "stored by the firmware, but this model shows no\nvisible change — see PROTOCOL.md",
         "device_subtitle": "Dareu TK51G family — sold as Husky HTG200/HTG500/HTG800 V2",
-        "backup_blurb": ("The keyboard keeps its lighting in persistent memory: a\n"
-                          "change survives unplugging the cable. A backup is the\n"
-                          "way back from a setting you do not like."),
+        "backup_blurb": ("The keyboard keeps its lighting AND its key map in\n"
+                          "persistent memory: both survive unplugging the cable.\n"
+                          "A backup saves the two together and is the way back\n"
+                          "from a change you do not like."),
         "layout_note": ("The layout below is read from Dareu's own device profile "
                          "— 83 keys, the vendor's own geometry."),
         "todo_connection": "Wired/wireless connection toggle",
@@ -75,8 +76,17 @@ STRINGS = {
         "backup_saved": "Backed up to {path}",
         "backup_failed": "Backup failed: {error}",
         "restored": "Restored from {path}",
+        "backup_unreadable": "{name} is not a backup this can read ({detail}).",
+        "restoring": "Restoring the lighting…",
+        "restoring_keys": "Restoring the lighting and the key map — the key map "
+                          "is 166 writes and takes about 17 seconds.",
+        "restore_partial": "Restored with failures: {regions} lighting "
+                           "region(s), {keys} key assignment(s). The backup is "
+                           "still on disk — running restore again is the fix.",
+        "profiles_active": "{listed}   (active: {active})",
+        "profiles_only_one": "— the vendor app's other slots must be created first",
         "no_backup": "No backup file yet — use Back up first",
-        "auto_backup": "Saved a backup of the current lighting to {path}",
+        "auto_backup": "Saved a backup of this keyboard to {path}",
         "device_model": "Model",
         "device_pid": "USB id",
         "device_node": "HID node",
@@ -87,6 +97,7 @@ STRINGS = {
         "sleep_minutes": "{minutes} min",
         "battery_reading": "reading…",
         "battery_unknown": "unknown",
+        "device_profiles": "Profiles",
         "device_regions": "Lighting regions",
         "yes": "yes",
         "no": "no",
@@ -167,9 +178,10 @@ STRINGS = {
         "from_windows_app": "do app oficial da Husky",
         "direction_inert": "o firmware guarda o byte, mas este modelo não\nmuda visivelmente — veja PROTOCOL.md",
         "device_subtitle": "Família Dareu TK51G — vendido como Husky HTG200/HTG500/HTG800 V2",
-        "backup_blurb": ("O teclado guarda a iluminação em memória persistente:\n"
-                          "a mudança sobrevive a desconectar o cabo. O backup é\n"
-                          "o caminho de volta de um ajuste que não agradou."),
+        "backup_blurb": ("O teclado guarda a iluminação E o mapa de teclas em\n"
+                          "memória persistente: os dois sobrevivem a desconectar\n"
+                          "o cabo. O backup salva os dois juntos e é o caminho\n"
+                          "de volta de uma mudança que não agradou."),
         "layout_note": ("O layout abaixo vem do perfil de dispositivo da própria "
                          "Dareu — 83 teclas, a geometria do fabricante."),
         "todo_connection": "Alternar conexão com fio / sem fio",
@@ -219,8 +231,17 @@ STRINGS = {
         "backup_saved": "Backup salvo em {path}",
         "backup_failed": "Falha no backup: {error}",
         "restored": "Restaurado de {path}",
+        "backup_unreadable": "{name} não é um backup que dê para ler ({detail}).",
+        "restoring": "Restaurando a iluminação…",
+        "restoring_keys": "Restaurando a iluminação e o mapa de teclas — são 166 "
+                          "escritas e leva cerca de 17 segundos.",
+        "restore_partial": "Restaurado com falhas: {regions} região(ões) de "
+                           "iluminação, {keys} atribuição(ões) de tecla. O backup "
+                           "continua no disco — repetir o restore resolve.",
+        "profiles_active": "{listed}   (ativo: {active})",
+        "profiles_only_one": "— os outros slots do app do fabricante precisam ser criados",
         "no_backup": "Ainda não há backup — use Backup primeiro",
-        "auto_backup": "Backup da iluminação atual salvo em {path}",
+        "auto_backup": "Backup deste teclado salvo em {path}",
         "device_model": "Modelo",
         "device_pid": "ID USB",
         "device_node": "Nó HID",
@@ -231,6 +252,7 @@ STRINGS = {
         "sleep_minutes": "{minutes} min",
         "battery_reading": "lendo…",
         "battery_unknown": "desconhecido",
+        "device_profiles": "Perfis",
         "device_regions": "Regiões de iluminação",
         "yes": "sim",
         "no": "não",
