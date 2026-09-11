@@ -1713,6 +1713,46 @@ as six packets (16, 16, 16, 16, 16, 10). The whole loop is gated on
 animated path and is where the frame *number* and the multi-frame loop earn
 their keep.
 
+### What the hardware said when it was sent
+
+It was sent. Region 1's snapshot was taken first and restored after; the
+keyboard is where it started.
+
+**Accepted, and the firmware acts on each packet.** With the effect set to 18
+(`StreamingFrame`, which both regions list), frame packets are acknowledged and
+the keyboard visibly changes as they arrive — streaming at 120 packets a second
+made it flash.
+
+**Three things the hardware corrected or settled, none of them guessable:**
+
+| | |
+|---|---|
+| flags byte | `0x00` on every packet, `0x80` on the last. Asked with 0x00, 0x01, 0x02, 0x40, 0x80, 0x81, 0xC0, 0xFF — **only 0x00 and 0x80 answered.** The IL reads as though it starts the byte at 1 and ORs in 0x80, i.e. 0x01/0x81, and the keyboard refuses both. That initial `1` in the decompiled method is something else. |
+| `payload[0]` | the **real region id**, 1 or 4. Not the "selected id" that `RegionIdToSelectedId` produces, which was the obvious guess from `TgDevice::SaveCustomLed` — 0 and 2 both go unanswered. |
+| `LED_CMD_CUSTOM` (8) | **not answered at all** by this keyboard. Consistent with neither region listing effects 13-17 (`CustomFrame1..5`): there is no slot here for a saved pattern, so streaming may be the only path this model has. |
+
+**And what does not work yet: the colours do not land where they are put.**
+Sending sixteen red LEDs at index 0 lights the *whole* keyboard, in blue. Sending
+sixteen blue ones lights the whole keyboard, also in blue. Two different payloads
+producing the same wrong result rules out the tidy explanations — it is not a
+BGR/RGB swap, and it is not the colour data being read one byte off, both of
+which would have produced two *different* wrong colours.
+
+`payload[3]` and `payload[4]` are accepted at every value from 0 to 89 without
+changing anything, which is what a field the firmware is not reading looks like.
+
+So something else has to happen before a frame means what it says. Candidates,
+in the order worth trying:
+
+- **a mode command before streaming.** `LED_CMD_CAL_DATA` (5) and the rest of
+  the dead-enum band have never been looked at, and one of them plausibly says
+  "expect frames of this shape".
+- **the frame may have to be whole.** Ninety LEDs need six packets; perhaps the
+  firmware only renders a frame it considers complete, and the intermediate
+  packets are being discarded rather than buffered.
+- **`payload[2]`, the frame number.** Always 0 here. If the firmware wants a
+  sequence, a single repeated frame 0 may be read as "no animation, ignore".
+
 ### What is still missing before this can be sent
 
 - **Which effect id shows a custom pattern.** Streaming and saving are known;

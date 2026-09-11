@@ -272,6 +272,31 @@ class Session:
         self.settle()
         return self.read_key_assign(key_id, layer, profile_id=profile_id)
 
+    def stream_frame(self, region_id, colors):
+        """Paint every LED of a region at once, in `vendor_tables.KEY_MATRIX` order.
+
+        The region's effect must already be `EFFECT_STREAMING_FRAME` (18) —
+        both regions of this keyboard list it in their LED_CMD_ATTRIBUTE reply.
+        Setting it is the caller's job, because it is an ordinary
+        `set_effect` and this method is only the frame.
+
+        Sent as ceil(len/16) packets, the last one flagged. Returns True when
+        every packet was acknowledged; a half-sent frame is reported as the
+        failure it is rather than as a partial success.
+
+        NOT CONFIRMED ON HARDWARE at the time of writing.
+        """
+        block = protocol.LED_FRAME_BLOCK
+        colors = list(colors)
+        chunks = [colors[i:i + block] for i in range(0, len(colors), block)]
+        for index, chunk in enumerate(chunks):
+            packet = protocol.build_set_led_frame(
+                region_id, chunk, frame=0, first_led=index * block,
+                last_frame=index == len(chunks) - 1)
+            if device.command_process(self.fd, packet) is None:
+                return False
+        return True
+
     def restore_key_map(self, key_map, profile_id=protocol.DEFAULT_PROFILE_ID):
         """Put a saved key map back. Returns [((key_id, layer), ok), ...].
 

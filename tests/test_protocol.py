@@ -1553,6 +1553,97 @@ def test_the_led_matrix_matches_the_public_key_list():
     assert vendor_tables.key_at_led(len(vendor_tables.KEY_MATRIX)) is None
 
 
+def test_led_frame_packet_layout():
+    """Port of `TgUsbHidDevice::SetLedFrame`, the streaming overload.
+
+    Expected bytes composed by hand from the decompiled IL, not from running
+    the builder. The Windows buffer is offset by one against this one because
+    it carries the HID report id at index 0; the indices here are corrected.
+
+      00 status | 36 size | 03 class | 04 cmd (LED_CMD_FRAME|SET) | 00 profile
+      00 pad    | 01 region | 81 flags | 00 frame | 00 first | 0f last
+      then R,G,B per LED
+
+    `HDR_SIZE` is **6 + 3n while the payload is 5 + 3n bytes** — one more than
+    `build_set_lighting_effect` uses for its own five payload bytes. The
+    vendor's two commands disagree and this transcribes what SetLedFrame does.
+    Correcting it would be inventing a byte the firmware may be counting.
+
+    Flags: 0x00 on every packet but the last, 0x80 on the last. The IL looked
+    like it started that byte at 1 and OR'd in 0x80, i.e. 0x01/0x81; the
+    keyboard refuses both. Asked with 0x00, 0x01, 0x02, 0x40, 0x80, 0x81, 0xC0
+    and 0xFF it acknowledged only 0x00 and 0x80. The hardware corrected the
+    decompilation here, which is the whole reason a write is probed before it
+    is trusted.
+    """
+    colors = [(255, 0, 0)] * 16
+    got = protocol.build_set_led_frame(1, colors, frame=0, first_led=0,
+                                        last_frame=True)
+    expected = _padded(bytes.fromhex(
+        "00" "36" "03" "04" "00" "00"
+        "01" "80" "00" "00" "0f" + "ff0000" * 16))
+    assert got == expected
+
+    # Not the last frame: bit 7 clears, nothing else moves.
+    other = protocol.build_set_led_frame(1, colors, frame=0, first_led=0,
+                                         last_frame=False)
+    assert other[protocol.PAYLOAD_BASE + 1] == 0x00
+    assert other[:protocol.PAYLOAD_BASE + 1] == got[:protocol.PAYLOAD_BASE + 1]
+
+    # A short final chunk: the last-LED index and HDR_SIZE both follow it.
+    tail = protocol.build_set_led_frame(1, [(1, 2, 3)] * 10, frame=2,
+                                         first_led=80, last_frame=True)
+    assert tail[protocol.HDR_SIZE] == 6 + 3 * 10
+    assert tail[protocol.PAYLOAD_BASE + 2] == 2          # frame number
+    assert tail[protocol.PAYLOAD_BASE + 3] == 80         # first
+    assert tail[protocol.PAYLOAD_BASE + 4] == 89         # first + 10 - 1
+    assert list(tail[protocol.PAYLOAD_BASE + 5:
+                     protocol.PAYLOAD_BASE + 5 + 30]) == [1, 2, 3] * 10
+
+
+def test_led_frame_refuses_what_it_cannot_put_on_the_wire():
+    """Sixteen LEDs per packet, from `TgUsbHidDevice`'s BLOCK_SIZE = 16.
+
+    A seventeenth would overflow the report — 5 + 3*17 = 56 payload bytes
+    against 58 available, so it would *fit* and still be wrong, because the
+    firmware is told 16 per packet by every packet the vendor sends. That is
+    the dangerous kind of limit: the one nothing downstream would catch.
+    """
+    ok = [(0, 0, 0)] * protocol.LED_FRAME_BLOCK
+
+    def rejects(**kw):
+        try:
+            protocol.build_set_led_frame(**dict(
+                dict(region_id=1, colors=ok, frame=0, first_led=0), **kw))
+        except ValueError:
+            return True
+        return False
+
+    assert rejects(colors=[(0, 0, 0)] * (protocol.LED_FRAME_BLOCK + 1))
+    assert rejects(colors=[])
+    assert rejects(colors=[(0, 256, 0)])
+    assert rejects(colors=[(0, -1, 0)])
+    assert rejects(region_id=300)
+    assert rejects(frame=-1)
+    assert rejects(first_led=300)
+    assert len(protocol.build_set_led_frame(1, ok, frame=0, first_led=0)) \
+        == protocol.REPORT_SIZE
+
+
+def test_save_custom_led_layout():
+    """Port of `TgUsbHidDevice::SaveCustomLed` — LED_CMD_CUSTOM (8).
+
+      00 status | 02 size | 03 class | 08 cmd | 01 profile
+
+    Note this is the LOW-LEVEL SaveCustomLed. `TgDevice::SaveCustomLed` shares
+    the name, sends nothing at all, and writes a file on the PC — reading that
+    one instead gives "saving is a PC-side operation", which is half true and
+    useless.
+    """
+    expected = _padded(bytes.fromhex("00" "02" "03" "08" "01"))
+    assert protocol.build_save_custom_led(profile_id=1) == expected
+
+
 # --- CLASS_MACRO (6), read-only ---------------------------------------------
 
 def test_get_macro_id_list_probe():

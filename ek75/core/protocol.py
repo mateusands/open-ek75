@@ -397,6 +397,97 @@ def is_response_ready(resp):
     return (resp[HDR_STATUS] & 0x0F) == 2
 
 
+# --- LED_CMD_FRAME (4) — per-key colour, streamed from here ------------------
+# Recovered from the Windows app, not from the web driver: `tgdevice.js` names
+# LED_CMD_FRAME in its enum and never sends it. See PROTOCOL.md, "LED_CMD_FRAME".
+#
+# Sixteen LEDs per packet, which is `TgUsbHidDevice.BLOCK_SIZE` read out of its
+# constructor. A seventeenth would still fit in the report (5 + 3*17 = 56 bytes
+# against 58 available) and would still be wrong — the kind of limit nothing
+# downstream would catch, so it is enforced here.
+LED_FRAME_BLOCK = 16
+# The flags byte is 0x00 on every packet but the last, which is 0x80. Nothing
+# else is accepted: the firmware was asked for 0x00, 0x01, 0x02, 0x40, 0x80,
+# 0x81, 0xC0 and 0xFF, and answered only the first and the fifth.
+#
+# The IL appeared to start this byte at 1 and OR in 0x80 on the last packet,
+# which would make 0x01/0x81. The keyboard refused both. That initial `1` is
+# something else in the decompiled method — the return value, most likely —
+# and this is the one place in this file where the hardware corrected a reading
+# of the vendor's binary rather than confirming it.
+LED_FRAME_FLAG_LAST = 0x80
+
+
+def build_set_led_frame(region_id, colors, frame=0, first_led=0,
+                        last_frame=True):
+    """LED_CMD_FRAME|SET_CMD — one packet of a streamed frame.
+
+    `colors` is up to LED_FRAME_BLOCK (r, g, b) tuples, in LED order —
+    `vendor_tables.KEY_MATRIX` is what that order means on region 1.
+
+    HDR_SIZE is 6 + 3n where the payload is 5 + 3n bytes. That is what
+    `SetLedFrame` writes; `build_set_lighting_effect` uses 5 + 3n for its own
+    five payload bytes, so the vendor's two commands disagree by one.
+    Transcribed rather than reconciled — a "fix" here would be inventing a byte
+    the firmware may well be counting.
+
+    **Accepted by this keyboard and not yet doing what it says.** Frames are
+    acknowledged and the firmware visibly reacts to each one, but sixteen red
+    LEDs at index 0 light the whole keyboard blue — and sixteen blue ones light
+    it the same blue, which rules out a byte-order swap and a one-byte offset
+    alike. `first_led`/`last_led` are accepted at every value 0..89 without
+    changing anything. Something has to happen before a frame means what it
+    says; see PROTOCOL.md, "What the hardware said when it was sent".
+    """
+    colors = [tuple(c) for c in colors]
+    if not colors:
+        raise ValueError("a frame packet needs at least one colour")
+    if len(colors) > LED_FRAME_BLOCK:
+        raise ValueError(f"at most {LED_FRAME_BLOCK} LEDs per packet, "
+                         f"got {len(colors)}")
+    if not isinstance(frame, int) or frame < 0 or frame > 255:
+        raise ValueError(f"frame must be 0..255, got {frame!r}")
+
+    pkt = _new_packet()
+    pkt[HDR_STATUS] = TARGET_ID
+    pkt[HDR_SIZE] = 6 + 3 * len(colors)
+    pkt[HDR_CLASS] = CLASS_LIGHTING
+    pkt[HDR_COMMAND] = LED_CMD_FRAME | SET_CMD
+    pkt[PAYLOAD_BASE + 0] = _byte("region_id", region_id)
+    pkt[PAYLOAD_BASE + 1] = LED_FRAME_FLAG_LAST if last_frame else 0
+    pkt[PAYLOAD_BASE + 2] = frame
+    pkt[PAYLOAD_BASE + 3] = _byte("first_led", first_led)
+    pkt[PAYLOAD_BASE + 4] = _byte("last_led", first_led + len(colors) - 1)
+    for i, (r, g, b) in enumerate(colors):
+        base = PAYLOAD_BASE + 5 + 3 * i
+        pkt[base + 0] = _byte(f"colors[{i}].r", r)
+        pkt[base + 1] = _byte(f"colors[{i}].g", g)
+        pkt[base + 2] = _byte(f"colors[{i}].b", b)
+    return bytes(pkt)
+
+
+def build_save_custom_led(profile_id=DEFAULT_PROFILE_ID):
+    """LED_CMD_CUSTOM|SET_CMD — persist what was streamed.
+
+    Port of `TgUsbHidDevice::SaveCustomLed`. There is a second method of that
+    name, `TgDevice::SaveCustomLed`, which sends nothing and writes a file on
+    the PC; this is the one that reaches the keyboard.
+
+    NOT CONFIRMED ON HARDWARE, and note this keyboard does not list effects
+    13-17 (CustomFrame1..5) in either region — so there may be no slot here for
+    a saved pattern to live in, and streaming to effect 18 may be the only path
+    this model has.
+    """
+    pkt = _new_packet()
+    pkt[HDR_STATUS] = TARGET_ID
+    pkt[HDR_SIZE] = 2
+    pkt[HDR_CLASS] = CLASS_LIGHTING
+    pkt[HDR_COMMAND] = LED_CMD_CUSTOM | SET_CMD
+    pkt[HDR_PROFILE] = _byte("profile_id", profile_id)
+    return bytes(pkt)
+
+
+
 # --- multi-packet transfers (tgdevice.js: GetMultiPacketCmd) -----------------
 # Some replies do not fit in one 64-byte report (the RegionId list, the profile
 # list, macro data). The vendor driver handles them in two steps: a probe that
