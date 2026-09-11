@@ -580,3 +580,53 @@ def parse_time_to_sleep_response(resp):
         "seconds": seconds,
         "minutes": round(seconds / 60),
     }
+
+
+# --- CLASS_KEY subcommands (tgdevice.js: CLASS_KEY_CMD_LIST) ----------------
+KEY_CMD_ID_LIST = 0
+KEY_CMD_ATTRIBUTE = 1
+KEY_CMD_DEBOUNCE = 2
+KEY_CMD_ASSIGN = 3                     # implemented (read)
+KEY_CMD_ANALOG_ACTUATION_POINT = 4
+KEY_CMD_FN_LOCK = 5
+KEY_WIN_LOCK_MAC_STATUS = 6
+KEY_PERFORMACE = 7
+KEY_CMD_BULK_ASSIGN = 8                # not used — see PROTOCOL.md
+KEY_CMD_SOCD_STATUS = 9
+
+LAYER_BASE = 0
+LAYER_FN = 1
+
+
+def build_get_key_assign(key_id, layer, profile_id=DEFAULT_PROFILE_ID):
+    """KEY_CMD_ASSIGN|GET_CMD — what one key does on one layer.
+
+    Port of tgdevice.js `GetKeyAssign`. `layer` is LAYER_BASE or LAYER_FN;
+    those numbers are the vendor driver's, and reading both back from this
+    keyboard matched the profile's `default-function-*` and
+    `default-fn-function-*` fields, which is what identifies which is which.
+
+    Confirmed on hardware: all 83 keys answered on both layers.
+    """
+    pkt = _new_packet()
+    pkt[HDR_STATUS] = TARGET_ID
+    pkt[HDR_SIZE] = 8
+    pkt[HDR_CLASS] = CLASS_KEY
+    pkt[HDR_COMMAND] = KEY_CMD_ASSIGN | GET_CMD
+    pkt[HDR_PROFILE] = profile_id
+    pkt[PAYLOAD_BASE + 0] = key_id
+    pkt[PAYLOAD_BASE + 1] = layer
+    return bytes(pkt)
+
+
+def parse_key_assign_response(resp):
+    """Decode a KEY_CMD_ASSIGN reply into the same shape the device profile uses.
+
+    `data` is five bytes whose meaning depends on `function_id` — see
+    core/keymap.py, which is the only place that interprets them.
+    """
+    return {
+        "function_id": resp[PAYLOAD_BASE + 2],
+        "data": list(resp[PAYLOAD_BASE + 3:PAYLOAD_BASE + 8]),
+    }
+

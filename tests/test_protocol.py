@@ -459,11 +459,17 @@ def test_only_observed_effects_are_marked_colourless():
 
 
 def test_fn_layer_decodes_to_the_shortcuts_printed_nowhere():
-    """The Fn layer, decoded from the device profile's function ids and HID
-    usages (core/keymap.py).
+    """The Fn layer as decoded from the DEVICE PROFILE (`0101.json`).
 
-    Fn+I really is Print Screen on this keyboard — the owner had to search the
-    web to find that out, which is the whole reason this decoding exists.
+    CORRECTED: this docstring used to say "Fn+I really is Print Screen on this
+    keyboard". It tests no such thing — it decodes the vendor's JSON, and the
+    keyboard was later measured disagreeing with that JSON on 23 assignments.
+    `Fn`+`Space` below is one of them: the profile says "cycle brightness", the
+    keyboard says Space. The assertion stays because decoding the profile
+    correctly is still worth pinning; the claim about hardware does not.
+
+    What the keyboard actually reports is covered by the CLASS_KEY tests and by
+    `open-ek75 keys --diff`. See PROTOCOL.md.
     """
     from ek75.core import keymap, layout
 
@@ -475,6 +481,7 @@ def test_fn_layer_decodes_to_the_shortcuts_printed_nowhere():
     assert shortcuts["L"] == ("End", "End")
     assert shortcuts["F7"] == ("Play / Pause", "Play / Pausar")
     assert shortcuts["F11"] == ("Mute", "Mudo")
+    # NOT what the keyboard does — see the docstring. This pins the decoder.
     assert shortcuts["Space"] == ("Cycle brightness", "Trocar brilho")
 
     # Pass-throughs must not be listed: Fn+Tab is still Tab, and 11 such keys
@@ -605,3 +612,69 @@ def test_time_to_sleep_disabled_reports_no_time():
     assert info["enabled"] is False
     assert info["seconds"] == 0
     assert info["minutes"] == 0
+
+
+# --- CLASS_KEY, read-only ----------------------------------------------------
+
+def test_get_key_assign_layout():
+    """GetKeyAssign: HDR_SIZE=8, CLASS_KEY(1), KEY_CMD_ASSIGN(3)|GET, profile in
+    the header, then keyId and layer as the first two payload bytes.
+
+    Transcribed from tgdevice.js. Layer 0 is the base map, 1 is the Fn layer —
+    confirmed by reading both from the keyboard and matching them against the
+    vendor profile's `default-function-*` and `default-fn-function-*` fields.
+    """
+    assert protocol.build_get_key_assign(1, 0) == _padded(
+        bytes.fromhex("0008018301000100"))
+    assert protocol.build_get_key_assign(1, 1) == _padded(
+        bytes.fromhex("0008018301000101"))
+    # KeyIDs are not a 1..83 range: this keyboard's run to 172 with gaps.
+    assert protocol.build_get_key_assign(172, 1) == _padded(
+        bytes.fromhex("000801830100ac01"))
+
+
+def test_parse_key_assign_as_read_from_hardware():
+    """Esc on the base layer, exactly as this keyboard replied: FunctionId 6
+    (a plain key) with HID usage 41, which is Escape.
+    """
+    resp = _padded(bytes.fromhex("02" + "0801830100" + "01" + "00"
+                                 + "06" + "0029000000"))
+    info = protocol.parse_key_assign_response(resp)
+    assert info["function_id"] == 6
+    assert info["data"] == [0, 41, 0, 0, 0]
+
+
+def test_hid_keys_covers_every_usage_this_keyboard_emits():
+    """The base layer is mostly letters and digits, and the Fn-layer decoder
+    dropped those on purpose as noise. Reused unchanged for the base layer it
+    would leave 66 of 79 keys undescribed, so the table has to be complete.
+
+    This asserts against the keyboard's own profile rather than a hand-written
+    list, so a future device that emits a usage nobody thought of fails here.
+    """
+    from ek75.core import keymap, layout
+
+    used = set()
+    for key in layout.load().keys:
+        for fid, data in ((key.function_id, key.function_data),
+                          (key.fn_function_id, key.fn_function_data)):
+            if fid == 6 and data[1]:
+                used.add(data[1])
+
+    missing = sorted(u for u in used if u not in keymap.HID_KEYS)
+    assert not missing, f"usages with no label: {missing}"
+
+
+def test_describe_takes_raw_values_so_the_rule_exists_once():
+    """`describe_fn` decoded a Key's stored JSON fields; live data arrives as a
+    (function_id, data) pair with no Key around it. One decoder answers both, or
+    the rule drifts between them.
+    """
+    from ek75.core import keymap
+
+    assert keymap.describe(6, [0, 41, 0, 0, 0]) == ("Esc", "Esc")
+    assert keymap.describe(6, [0, 4, 0, 0, 0]) == ("A", "A")
+    assert keymap.describe(6, [0, 70, 0, 0, 0]) == ("Print Screen", "Print Screen")
+    assert keymap.describe(8, [1, 148, 0, 0, 0]) == ("My computer", "Meu computador")
+    assert keymap.describe(54, [1, 0, 0, 0, 0])[0] == "Cycle brightness"
+    assert keymap.describe(6, [2, 0, 0, 0, 0]) is None       # a bare modifier
