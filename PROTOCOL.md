@@ -878,6 +878,76 @@ the cable and power-cycling the keyboard — unlike, e.g., a HyperX SoloCast's
 mute state, there is no daemon or boot-time script needed here. A single
 successful `set` command is permanent.
 
+## `CLASS_POWER` (7) — battery and the idle timer
+
+Implemented **read-only**. Both reads were transcribed from `tgdevice.js` and then
+answered by the real keyboard, so the values below are what the device returned.
+
+```
+CLASS_POWER_CMD_LIST
+  0 PWR_CMD_BAT_STATUS    <- implemented (read)
+  1 PWR_CMD_TIME_2_DIM        this keyboard does not answer it
+  2 PWR_CMD_TIME_2_SLEEP  <- implemented (read); the write is deliberately absent
+  3 PWR_CMD_LOW_INDICATOR_CTRL
+  4 PWR_CMD_MAX_LED_BRIGHTNESS
+  5 PWR_CMD_ADC
+  6 PWR_CMD_USB_TIME_2_SLEEP  reads Control=0 while on the cable
+```
+
+### `PWR_CMD_BAT_STATUS` (read)
+
+Request: `HDR_SIZE = 3`, class 7, command `0 | GET_CMD`. **`HDR_PROFILE` is not
+written** — the vendor driver sets four header fields and stops, which makes sense:
+charge is a property of the keyboard, not of a profile. This is the third builder in
+this repo that sends profile 0, each for its own reason.
+
+```
+byte 6   Status        raw; the value set is not documented anywhere seen here
+byte 7   Level
+byte 8   MaxLevel
+byte 9   Critical      raw
+```
+
+Read from this keyboard, plugged in: `Status=1 Level=100 MaxLevel=100 Critical=0`.
+
+`parse_battery_status_response` derives a percentage from `Level / MaxLevel` rather
+than assuming a 0-100 scale, and returns `None` for it when `MaxLevel` is 0. `Status`
+and `Critical` are passed through unnamed: guessing what `1` means would be inventing
+a meaning, and the GUI shows only the percentage for that reason.
+
+### `PWR_CMD_TIME_2_SLEEP` (read)
+
+Request: `HDR_SIZE = 3`, class 7, command `2 | GET_CMD`, **`HDR_PROFILE` set** — the
+vendor driver writes `D[HDR_PROFILE] = A.ProfileId`, so the idle timeout is stored per
+profile.
+
+```
+byte 6   Control       0 = the timer is off
+byte 7-8 Second        big-endian; only read when Control != 0
+```
+
+Read from this keyboard, profile 1: `Control=1, Second=180`.
+
+**Units.** The wire carries **seconds**; the official software's slider and
+`TK51G0101.dll` (`MinSleepTime=3.0`, `MaxSleepTime=30.0`) are **minutes**. 180 s is
+exactly those 3 minutes, which is the minimum — the two agree.
+
+### Why `SetTimeToSleep` is not implemented
+
+Its bytes are known and unremarkable — same header, `SET_CMD`, `payload[0] = Control`,
+`payload[1..2] = Second` big-endian. It is left out on purpose:
+
+**The effect cannot be observed on the only connection this project supports.**
+Configuration works over the USB cable, and `PWR_CMD_USB_TIME_2_SLEEP` reads
+`Control=0` — the keyboard does not sleep while on the cable. A write could therefore
+be acknowledged, read back correctly, and never be seen to do anything. That reaches
+L3 on this project's ladder and can never reach L4.
+
+That is a weaker position than every other write here, and the rule in golden rule 2
+is not "send it and see" — so the bytes are recorded and the command is not shipped.
+Whoever implements it should say in the same breath how they intend to confirm it,
+and "the value read back" is not an answer to "does the keyboard sleep".
+
 ## What is not implemented yet
 
 - **Multi-colour effects** (anything needing `N > 1` in the colour list) —
@@ -893,12 +963,16 @@ successful `set` command is permanent.
 - **Effect ids 130 and 141** appear in the Windows app's direction and speed
   tables but are outside `TG_LIGHT_EFFECT_INDEX` (0-32). Probably the app's
   software-rendered effects, streamed as frames. Unverified.
-- **Everything outside `CLASS_LIGHTING`**: `CLASS_KEY` (key remapping),
+- **`SetTimeToSleep`** — bytes known, deliberately unshipped; see `CLASS_POWER` above.
+- **Everything outside `CLASS_LIGHTING` and the two `CLASS_POWER` reads**:
+  `CLASS_KEY` (key remapping),
   `CLASS_BUTTON`, `CLASS_MACRO`, `CLASS_PROFILE` (multiple profiles — this
   code always uses profile 1), `CLASS_SENSOR`/`CLASS_MAGNETIC_AXIS` (this
   model may not be Hall-effect, but the class exists in the shared
-  framework), `CLASS_POWER` (battery/sleep, relevant since `HasBattery` is
-  true in the device profile), `CLASS_AUDIO`, `CLASS_LCD`, `CLASS_TEST`.
+  framework), `CLASS_AUDIO`, `CLASS_LCD`, `CLASS_TEST`. Of `CLASS_POWER`, the
+  two reads are done; what remains there is `TIME_2_DIM` (this keyboard does not
+  answer it), `LOW_INDICATOR_CTRL`, `MAX_LED_BRIGHTNESS`, `ADC`,
+  `USB_TIME_2_SLEEP`, and the `SetTimeToSleep` write above.
 - **`CLASS_DFU` (9) — do not touch without a very good reason.** This is the
   firmware-update class. `tgdevice.js` implements it (`TgKeyboard` extends a
   base with DFU methods used by other product lines in the same framework),

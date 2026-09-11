@@ -439,8 +439,10 @@ def build_get_led_region_attribute(region_id):
     """LED_CMD_ATTRIBUTE|GET_CMD — a region's type, FPS, matrix and effect list.
 
     Port of tgdevice.js `GetLedRegionAttribute`. Note it leaves HDR_PROFILE at
-    0 (the driver does not set it for this command), unlike every other
-    lighting command here.
+    0, because the driver does not set it for this command. It is not the only
+    builder here that sends profile 0 — `build_get_led_region_id_list_probe`
+    does too, and so does `build_get_battery_status` — but each has its own
+    reason, and none of them inherits `DEFAULT_PROFILE_ID`.
     """
     pkt = _new_packet()
     pkt[HDR_STATUS] = TARGET_ID
@@ -489,3 +491,92 @@ def build_set_lighting_brightness(region_id, brightness,
     pkt[PAYLOAD_BASE + 0] = region_id
     pkt[PAYLOAD_BASE + 1] = brightness & 0xFF
     return bytes(pkt)
+
+
+# --- CLASS_POWER subcommands (tgdevice.js: CLASS_POWER_CMD_LIST) -------------
+PWR_CMD_BAT_STATUS = 0                 # implemented (read)
+PWR_CMD_TIME_2_DIM = 1                 # this keyboard does not answer it
+PWR_CMD_TIME_2_SLEEP = 2               # implemented (read)
+PWR_CMD_LOW_INDICATOR_CTRL = 3
+PWR_CMD_MAX_LED_BRIGHTNESS = 4
+PWR_CMD_ADC = 5
+PWR_CMD_USB_TIME_2_SLEEP = 6           # reads Control=0 while on the cable
+
+# The official software's sleep slider runs 3-30 and TK51G0101.dll declares
+# MinSleepTime=3.0 / MaxSleepTime=30.0. The wire carries SECONDS: this keyboard
+# returned 180, which is those 3 minutes. Minutes in a UI, seconds on the wire.
+SLEEP_MIN_MINUTES = 3
+SLEEP_MAX_MINUTES = 30
+
+
+def build_get_battery_status():
+    """PWR_CMD_BAT_STATUS|GET_CMD — port of tgdevice.js `GetBatteryStatus`.
+
+    Takes no profile: the vendor driver writes HDR_STATUS, HDR_SIZE, HDR_CLASS
+    and HDR_COMMAND and stops, leaving HDR_PROFILE at 0. Charge is a property of
+    the keyboard, not of a profile, so there is nothing to pass.
+
+    Confirmed on hardware: this keyboard answered Status=1, Level=100,
+    MaxLevel=100, Critical=0 while plugged in.
+    """
+    pkt = _new_packet()
+    pkt[HDR_STATUS] = TARGET_ID
+    pkt[HDR_SIZE] = 3
+    pkt[HDR_CLASS] = CLASS_POWER
+    pkt[HDR_COMMAND] = PWR_CMD_BAT_STATUS | GET_CMD
+    return bytes(pkt)
+
+
+def parse_battery_status_response(resp):
+    """Decode a PWR_CMD_BAT_STATUS reply.
+
+    `percent` is derived, not sent: the firmware reports Level out of MaxLevel,
+    and dividing by an assumed 100 would misreport any device that uses a
+    coarser scale. None when MaxLevel is 0 — unknown beats a wrong number.
+
+    `status` and `critical` are passed through as the raw bytes. Their value
+    sets are not documented anywhere this project has seen; naming them here
+    would be inventing a meaning rather than reporting one.
+    """
+    level = resp[PAYLOAD_BASE + 1]
+    max_level = resp[PAYLOAD_BASE + 2]
+    return {
+        "status": resp[PAYLOAD_BASE + 0],
+        "level": level,
+        "max_level": max_level,
+        "critical": resp[PAYLOAD_BASE + 3],
+        "percent": round(level * 100 / max_level) if max_level else None,
+    }
+
+
+def build_get_time_to_sleep(profile_id=DEFAULT_PROFILE_ID):
+    """PWR_CMD_TIME_2_SLEEP|GET_CMD — port of tgdevice.js `GetTimeToSleep`.
+
+    Carries the profile, unlike the battery read: the vendor driver sets
+    `D[HDR_PROFILE] = A.ProfileId`, so the idle timeout is stored per profile.
+
+    Confirmed on hardware: profile 1 answered Control=1, Second=180.
+    """
+    pkt = _new_packet()
+    pkt[HDR_STATUS] = TARGET_ID
+    pkt[HDR_SIZE] = 3
+    pkt[HDR_CLASS] = CLASS_POWER
+    pkt[HDR_COMMAND] = PWR_CMD_TIME_2_SLEEP | GET_CMD
+    pkt[HDR_PROFILE] = profile_id
+    return bytes(pkt)
+
+
+def parse_time_to_sleep_response(resp):
+    """Decode a PWR_CMD_TIME_2_SLEEP reply.
+
+    Verbatim from the vendor driver: when Control is 0 the timer is off and the
+    two seconds bytes are not read at all — reading them anyway would report a
+    timeout for a device that has none.
+    """
+    enabled = resp[PAYLOAD_BASE] != 0
+    seconds = (resp[PAYLOAD_BASE + 1] << 8 | resp[PAYLOAD_BASE + 2]) if enabled else 0
+    return {
+        "enabled": enabled,
+        "seconds": seconds,
+        "minutes": round(seconds / 60),
+    }

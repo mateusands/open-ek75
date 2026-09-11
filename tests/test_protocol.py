@@ -526,3 +526,82 @@ def test_settings_survive_a_round_trip_and_ignore_junk():
         assert settings.load(path) == settings.DEFAULTS
 
         assert settings.load(os.path.join(tmp, "absent.json")) == settings.DEFAULTS
+
+
+# --- CLASS_POWER, read-only --------------------------------------------------
+# Both builders are transcribed from tgdevice.js and both were then exercised
+# against the real keyboard, so the replies below are values the device actually
+# returned — the strongest tier this project has short of a visual confirmation,
+# which does not apply to a read.
+
+def test_get_battery_status_writes_no_profile():
+    """GetBatteryStatus: HDR_SIZE=3, CLASS_POWER(7), PWR_CMD_BAT_STATUS(0)|GET.
+
+    It takes no profile argument because the vendor driver writes none —
+    tgdevice.js's `GetBatteryStatus` sets HDR_STATUS, HDR_SIZE, HDR_CLASS and
+    HDR_COMMAND and stops, leaving HDR_PROFILE at 0. Battery is a property of
+    the keyboard, not of a profile.
+    """
+    expected = _padded(bytes.fromhex("000307800000"))
+    assert protocol.build_get_battery_status() == expected
+
+
+def test_parse_battery_status_as_read_from_hardware():
+    """The reply this keyboard actually returned, plugged in and full:
+    Status=1, Level=100, MaxLevel=100, Critical=0.
+    """
+    resp = _padded(bytes.fromhex("02" + "0407" + "8000" + "00" + "01646400"))
+    info = protocol.parse_battery_status_response(resp)
+    assert info["status"] == 1
+    assert info["level"] == 100
+    assert info["max_level"] == 100
+    assert info["critical"] == 0
+    assert info["percent"] == 100
+
+
+def test_battery_percent_is_scaled_by_max_level_not_assumed_to_be_100():
+    """MaxLevel is a field, so the percentage divides by it. A device reporting
+    Level=3 of MaxLevel=4 is at 75%, not 3%.
+    """
+    resp = _padded(bytes.fromhex("02" + "0407" + "8000" + "00" + "01030400"))
+    assert protocol.parse_battery_status_response(resp)["percent"] == 75
+
+    # MaxLevel 0 must not divide by zero — the percentage is simply unknown.
+    resp = _padded(bytes.fromhex("02" + "0407" + "8000" + "00" + "01000000"))
+    assert protocol.parse_battery_status_response(resp)["percent"] is None
+
+
+def test_get_time_to_sleep_carries_the_profile():
+    """GetTimeToSleep: HDR_SIZE=3, CLASS_POWER(7), PWR_CMD_TIME_2_SLEEP(2)|GET,
+    HDR_PROFILE set — unlike the battery read, the sleep timer is per profile,
+    which is what tgdevice.js's `D[HDR_PROFILE] = A.ProfileId` says.
+    """
+    expected = _padded(bytes.fromhex("000307820100"))
+    assert protocol.build_get_time_to_sleep() == expected           # profile 1 default
+    assert protocol.build_get_time_to_sleep(profile_id=1) == expected
+
+
+def test_parse_time_to_sleep_as_read_from_hardware():
+    """What this keyboard returned for profile 1: Control=1, Second=180.
+
+    180 s is 3 minutes, which is exactly MinSleepTime in the vendor's
+    TK51G0101.dll — the wire is in seconds and the official slider is in
+    minutes. See PROTOCOL.md.
+    """
+    resp = _padded(bytes.fromhex("02" + "0307" + "8201" + "00" + "0100b4"))
+    info = protocol.parse_time_to_sleep_response(resp)
+    assert info["enabled"] is True
+    assert info["seconds"] == 180
+    assert info["minutes"] == 3
+
+
+def test_time_to_sleep_disabled_reports_no_time():
+    """Control==0 means the timer is off, and the vendor driver then reports
+    Second as 0 without reading the two bytes. USB_TIME_2_SLEEP came back this
+    way on the cable.
+    """
+    resp = _padded(bytes.fromhex("02" + "0307" + "8201" + "00" + "00ffff"))
+    info = protocol.parse_time_to_sleep_response(resp)
+    assert info["enabled"] is False
+    assert info["seconds"] == 0
+    assert info["minutes"] == 0

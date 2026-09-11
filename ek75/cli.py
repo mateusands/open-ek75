@@ -136,6 +136,16 @@ def cmd_probe(args):
     path = device.find_device()
     print(f"device: {path}")
     with lighting.Session.open() as session:
+        battery = session.read_battery()
+        if battery is not None:
+            pct = f"{battery['percent']}%" if battery["percent"] is not None else "?"
+            print(f"battery: {pct}  (level {battery['level']}/{battery['max_level']}, "
+                  f"status {battery['status']}, critical {battery['critical']})")
+        sleep = session.read_sleep()
+        if sleep is not None:
+            print("sleep:   " + (f"{sleep['minutes']} min ({sleep['seconds']} s)"
+                                  if sleep["enabled"] else "disabled"))
+
         ids, source = session.region_ids()
         print(f"regions: {ids}   (source: {source})")
         for region in ids:
