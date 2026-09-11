@@ -1628,6 +1628,105 @@ coincidence; nothing here rests on it.)
   `SetMultiPacketCmd`, a transport this project has never sent, and all of them
   needing the data format above, which is not decoded.
 
+## `LED_CMD_FRAME` (4) — per-key colour, reconstructed but unsent
+
+The biggest feature the official app has and this does not: painting each key
+its own colour, and the audio visualiser, which runs through the same mechanism.
+The packet layout below is complete. **Nothing here has been sent to a
+keyboard.**
+
+### The web driver is no help, and says so by omission
+
+`CLASS_LIGHTING_CMD_LIST` declares nine commands. `tgdevice.js` sends three:
+
+    LED_CMD_ID_LIST (0), LED_CMD_ATTRIBUTE (1), LED_CMD_EFFECT (2),
+    LED_CMD_BRIGHTNESS (3)                                   <- implemented here
+    LED_CMD_FRAME (4), LED_CMD_CAL_DATA (5), LED_CMD_CHARGE_CTRL (6),
+    LED_CMD_DPI_STAGE_INDICATOR_COLOR (7), LED_CMD_CUSTOM (8)
+                                    <- appear once each, in the enum, never sent
+
+The same dead-enum pattern as the profile and macro writes. So this was
+recovered from the **Windows app** instead, by walking `DeviceBase.dll`'s IL.
+
+### The packet
+
+`UsbHidDevice.TgUsbHidDevice::SetLedFrame`, the streaming overload. Its buffer
+is offset by one against this project's, because it carries the HID report id at
+index 0; the indices below are already corrected.
+
+    HDR_STATUS   TargetId
+    HDR_SIZE     6 + 3 * leds_in_this_packet
+    HDR_CLASS    3   CLASS_LIGHTING
+    HDR_COMMAND  4   LED_CMD_FRAME | SET_CMD
+    HDR_PROFILE  not written
+      payload[0]   region id
+      payload[1]   flags — 0x01, OR 0x80 on the last frame
+      payload[2]   frame number
+      payload[3]   index of the first LED in this packet
+      payload[4]   index of the last LED in this packet
+      payload[5+]  R, G, B per LED, in order
+
+`BLOCK_SIZE = 16`, read from `TgUsbHidDevice`'s constructor: sixteen LEDs per
+packet, 48 colour bytes, 53 payload bytes in all. The single-frame overload is
+the same command with the payload passed through whole and a cap of
+`REPORT_SIZE - 1 - 6`.
+
+**`HDR_SIZE` is 6 + 3n and the payload is 5 + 3n bytes.** That is not a typo
+here: `build_set_lighting_effect` uses exactly `5 + 3n` for its own five payload
+bytes, so the vendor's two commands disagree by one. Transcribed as found rather
+than corrected — a "fix" would be this project inventing a byte the firmware may
+well be counting.
+
+`payload[0]` is the region id by inference, not by capture: every other
+`CLASS_LIGHTING` command puts it there, and `TgDevice::SetMultiLedFrame` looks
+up `RegionList[index]` and the matching `LedParams[index]` before handing off.
+Strong, and still an inference.
+
+### What is still missing before this can be sent
+
+- **What a frame means to the firmware.** The byte layout is known; whether a
+  frame persists, how many frames a sequence may have, and what the device does
+  between frames are not.
+- ~~**Which LED index is which key.**~~ **Done.** `TK51G0101::_matrixIds` is a
+  90-entry int32 array in the product DLL's `FieldRva` data: six rows of
+  fifteen, row-major, holding the KeyID at each LED position and 0 where there
+  is no key. It is transcribed into `core/vendor_tables.KEY_MATRIX` and reads
+  as the physical keyboard:
+
+      Esc  F1  F2  F3  F4  F5  F6  F7  F8  F9 F10 F11 F12   ·   ·
+        ~   1   2   3   4   5   6   7   8   9   0   -   = Bksp PgUp
+      Tab   Q   W   E   R   T   Y   U   I   O   P   [   ]   \  Del
+     Caps   A   S   D   F   G   H   J   K   L   ;   '   · Entr PgDn
+    LShift  Z   X   C   V   B   N   M   ,   .   / RShift Up   ·   ·
+     LCtrl LWin LAlt ·   · Space  ·   ·   · RAlt  Fn RCtrl Lft Down Rgt
+
+  Checked against `0101.json`, which is public and was not involved in
+  producing it: every id exists there, none repeats, the shape is the 6x15 the
+  keyboard reports for region 1 through `LED_CMD_ATTRIBUTE`, and the only keys
+  absent are 170-172 — `Mute`, `Volume +`, `Volume -`, the knob, which has no
+  LED under it. Four independent ways for a bad transcription to show, and none
+  of them did.
+- **A way back.** Lighting is the safest write class here — `backup`/`restore`
+  are confirmed — so this is a question of sequencing, not of danger.
+- **`SaveCustomLed`**, which the app calls after streaming. Unread.
+
+### `_brightnessLevel`: the Fn brightness ladder, probably
+
+The product DLL's other `FieldRva` entry is five bytes — `0, 70, 120, 190, 255`
+— and `TK51G0101::get_BrightnessLevel` returns a field of that name. Five steps
+is what `BrightnessAdjust` on `Fn`+`↑`/`↓` would cycle through, and 255 is
+`BRIGHTNESS_MAX`.
+
+Inferred, not confirmed: nobody has watched the stored brightness walk those
+values. It is cheap to settle and costs no write — `watch 1` while pressing
+`Fn`+`↑`, the same experiment that settled the speed range.
+
+### The other half: `SetAudiovisualizerParam`
+
+`ILedTg.SetAudiovisualizerParam` is on this product's interface list, so the
+audio visualiser is a feature of this model and not of a sibling. It is not in
+the web driver either. Unread.
+
 ## What is not implemented yet
 
 - **Multi-colour effects** — implemented for the effects that use them.

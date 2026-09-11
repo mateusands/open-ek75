@@ -50,3 +50,44 @@ def wave_color(position):
 def side_light_color(index):
     """The fixed colour of one side-light LED, by position along the strip."""
     return SIDE_LIGHT_FIXED[index % len(SIDE_LIGHT_FIXED)]
+
+# --- the key matrix: which key sits at each LED position ---------------------
+# `TK51G0101::_matrixIds`, a 90-entry int32 array in the product DLL's FieldRva
+# data. Six rows of fifteen, row-major, holding the KeyID at each LED position
+# and 0 where the matrix has no key. Region 1 reports itself as a 6x15 matrix
+# through LED_CMD_ATTRIBUTE, which is where the shape comes from independently.
+#
+# This is what `LED_CMD_FRAME` indexes: its payload[3] and payload[4] are the
+# first and last LED in a packet, and the colours that follow are in this order.
+# Without it, per-key colour has no way to say which key it means.
+#
+# Transcribed like the colour tables above, and checked against `0101.json` —
+# which is public data this project already ships — by
+# `test_the_led_matrix_matches_the_public_key_list`: every id in it exists
+# there, none is repeated, and the only keys it leaves out are the three knob
+# controls (170-172), which have no LED.
+KEY_MATRIX_ROWS = 6
+KEY_MATRIX_COLS = 15
+KEY_MATRIX = (
+      1,   2,   3,   4,   5,   6,   7,   8,   9,  10,  11,  12,  13,   0,   0,
+     17,  18,  19,  20,  21,  22,  23,  24,  25,  26,  27,  28,  29,  31,  34,
+     39,  40,  41,  42,  43,  44,  45,  46,  47,  48,  49,  50,  51,  52,  53,
+     60,  61,  62,  63,  64,  65,  66,  67,  68,  69,  70,  71,   0,  73,  55,
+     78,  80,  81,  82,  83,  84,  85,  86,  87,  88,  89,  91,  92,   0,   0,
+     97,  98,  99,   0,   0, 102,   0,   0,   0, 106, 107, 109, 110, 111, 112,
+)
+
+
+def key_at_led(index):
+    """The KeyID lit by LED `index`, or None where the matrix has no key."""
+    if not 0 <= index < len(KEY_MATRIX):
+        return None
+    return KEY_MATRIX[index] or None
+
+
+def led_for_key(key_id):
+    """The LED index that lights `key_id`, or None — the knob has no LED."""
+    try:
+        return KEY_MATRIX.index(key_id)
+    except ValueError:
+        return None

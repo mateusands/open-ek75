@@ -1502,6 +1502,57 @@ def test_a_profile_is_a_backup_and_an_old_backup_is_a_profile():
             raise AssertionError("deleting a missing profile reported success")
 
 
+def test_the_led_matrix_matches_the_public_key_list():
+    """The matrix comes out of a proprietary binary; this checks it with public data.
+
+    `KEY_MATRIX` is `TK51G0101::_matrixIds`, transcribed from the Windows app's
+    FieldRva data — the same provenance as the colour tables beside it. A
+    transcription can be silently wrong, so it is checked against
+    `ek75/data/0101.json`, which this project already ships and which was not
+    involved in producing it.
+
+    Four things have to hold, and each would catch a different mistake:
+
+    - **every id in the matrix is a real key** — catches a misread offset or a
+      wrong element width, which would produce plausible-looking garbage;
+    - **no id appears twice** — catches a duplicated row;
+    - **the only keys left out are the knob's three** (170-172), which have no
+      LED under them. Any other absence means a row was dropped;
+    - **the shape is 6 x 15**, which the keyboard itself reports for region 1
+      through LED_CMD_ATTRIBUTE, arrived at independently of the DLL.
+
+    This is what `LED_CMD_FRAME` indexes. Getting it wrong means painting the
+    wrong key, which is exactly the kind of error that looks like a feature bug
+    rather than a bad table.
+    """
+    import json
+    from ek75.core import vendor_tables
+
+    with open(os.path.join(os.path.dirname(__file__), "..", "ek75", "data",
+                            "0101.json")) as handle:
+        profile = json.load(handle)
+    known = {key["KeyID"] for key in profile["Keys"]}
+
+    assert len(vendor_tables.KEY_MATRIX) == (vendor_tables.KEY_MATRIX_ROWS
+                                              * vendor_tables.KEY_MATRIX_COLS)
+    assert (vendor_tables.KEY_MATRIX_ROWS, vendor_tables.KEY_MATRIX_COLS) == (6, 15)
+
+    lit = [key_id for key_id in vendor_tables.KEY_MATRIX if key_id]
+    assert set(lit) <= known, f"not real keys: {sorted(set(lit) - known)}"
+    assert len(lit) == len(set(lit)), "a key id appears at two LED positions"
+
+    knob = {170, 171, 172}
+    assert known - set(lit) == knob, (
+        f"unexpected keys missing from the matrix: "
+        f"{sorted(known - set(lit) - knob)}")
+
+    # And the two accessors agree with the table in both directions.
+    assert vendor_tables.key_at_led(0) == vendor_tables.KEY_MATRIX[0]
+    assert vendor_tables.led_for_key(vendor_tables.KEY_MATRIX[0]) == 0
+    assert vendor_tables.led_for_key(170) is None       # the knob has no LED
+    assert vendor_tables.key_at_led(len(vendor_tables.KEY_MATRIX)) is None
+
+
 # --- CLASS_MACRO (6), read-only ---------------------------------------------
 
 def test_get_macro_id_list_probe():
