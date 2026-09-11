@@ -1682,11 +1682,44 @@ well be counting.
 up `RegionList[index]` and the matching `LedParams[index]` before handing off.
 Strong, and still an inference.
 
+### The sequence, and what a frame holds
+
+`TgUsbHidDevice::SetCustomLed` is the whole act, and it is two commands:
+
+1. **stream** — `SetLedFrame`, one `LED_CMD_FRAME` packet per 16 LEDs until the
+   frame is sent, with `flags |= 0x80` on the last one;
+2. **persist** — `SaveCustomLed`, which is `LED_CMD_CUSTOM` (8):
+
+       HDR_SIZE 2, HDR_CLASS 3, HDR_COMMAND 8|SET, HDR_PROFILE = profile id
+       no payload
+
+   then the usual `(status & 0x0F) == 2` ready check.
+
+⚠️ **There are two `SaveCustomLed` methods and only one of them touches the
+keyboard.** `TgUsbHidDevice::SaveCustomLed` sends the command above.
+`TgDevice::SaveCustomLed` sends nothing at all — it updates the in-memory
+profile and calls `BackupHarddiskProfile`, i.e. it writes a file on the PC.
+Reading the wrong one would give "saving is a PC-side operation", which is half
+true and useless.
+
+**What a frame holds**, from `TgDevice::MultiLedEffectCustom`:
+
+    CustomColorList[(y * MatrixY + x) * 3 + 0..2]   ->  LedFramMatrix[y][x]
+
+A flat RGB byte list, row-major, in **exactly the order of `KEY_MATRIX`** — so
+for region 1 that is 90 LEDs, 270 bytes, and a still pattern is one frame sent
+as six packets (16, 16, 16, 16, 16, 10). The whole loop is gated on
+`LedDynamic.LedTimer == 0`, which is the still case; a non-zero timer is the
+animated path and is where the frame *number* and the multi-frame loop earn
+their keep.
+
 ### What is still missing before this can be sent
 
-- **What a frame means to the firmware.** The byte layout is known; whether a
-  frame persists, how many frames a sequence may have, and what the device does
-  between frames are not.
+- **Which effect id shows a custom pattern.** Streaming and saving are known;
+  what makes the keyboard display it rather than whatever effect is active is
+  not. `132` is the suspect — it appears in `CheckCustomColorCount` as a
+  one-colour effect and is outside `TG_LIGHT_EFFECT_INDEX` (0-32), like the
+  130/141 already noted in the direction and speed tables.
 - ~~**Which LED index is which key.**~~ **Done.** `TK51G0101::_matrixIds` is a
   90-entry int32 array in the product DLL's `FieldRva` data: six rows of
   fifteen, row-major, holding the KeyID at each LED position and 0 where there
@@ -1708,7 +1741,6 @@ Strong, and still an inference.
   of them did.
 - **A way back.** Lighting is the safest write class here — `backup`/`restore`
   are confirmed — so this is a question of sequencing, not of danger.
-- **`SaveCustomLed`**, which the app calls after streaming. Unread.
 
 ### `_brightnessLevel`: the Fn brightness ladder, probably
 
@@ -1720,6 +1752,43 @@ is what `BrightnessAdjust` on `Fn`+`↑`/`↓` would cycle through, and 255 is
 Inferred, not confirmed: nobody has watched the stored brightness walk those
 values. It is cheap to settle and costs no write — `watch 1` while pressing
 `Fn`+`↑`, the same experiment that settled the speed range.
+
+### The software effects: ids 128-147, and what they are
+
+`PROTOCOL.md` has carried this since the beginning as a guess — "effect ids 130
+and 141 appear in the Windows app's direction and speed tables but are outside
+`TG_LIGHT_EFFECT_INDEX` (0-32). Probably the app's software-rendered effects,
+streamed as frames. Unverified."
+
+It was right, and they have names. From `DeviceBase.dll`'s enum constants:
+
+| id | name | | id | name |
+|---|---|---|---|---|
+| 128 | `SwAudioVisualizer` | | 138 | `SwCartoon` |
+| 129 | `SwEnvironment` | | 139 | `SwFlowersBloom` |
+| 130 | `SwWaterfall` | | 140 | `SwVortex` |
+| 131 | `SwRainScene` | | 141 | `SwWindowShades` |
+| 132 | `SwScanning` | | 142 | `SwFluctuate` |
+| 133 | `SwFireworks` | | 143 | `SwRainbow` |
+| 134 | `SwCollision` | | 144 | `SwAreaReactive` |
+| 135 | `SwSingleLightUp` | | 145 | `SwHeartbeat` |
+| 136 | `SwLineReactive` | | 146 | `SwFluxay` |
+| 137 | `SwSnake` | | 147 | `SwSingleOff` |
+
+**`Sw` is `Software`.** Twenty of them, contiguous, all above the firmware's
+0-32 range: the PC renders each frame and streams it with `LED_CMD_FRAME`. That
+is why they are absent from the keyboard's own `LED_CMD_ATTRIBUTE` effect list
+and why sending one as an effect id would mean nothing to the firmware.
+
+Several have a firmware twin — `Waterfall` (26) and `SwWaterfall` (130),
+`Heartbeat` (28) and `SwHeartbeat` (145), `Fluxay` (29) and `SwFluxay` (146),
+`AreaReactive` (24) and `SwAreaReactive` (144). The app presumably offers the
+software version where it wants effects the firmware cannot do alone, or a
+consistent look across models whose firmware differs.
+
+*(A grep for names starting `Sw` also returns `Swap`, `SwitchLightingMod`,
+`SwitchLayout` and `SwitchParam`. Those are not effects; the band that matters
+is the contiguous 128-147.)*
 
 ### The other half: `SetAudiovisualizerParam`
 
@@ -1744,9 +1813,10 @@ the web driver either. Unread.
   every other field held identical, is visibly faster at 3. See "`Speed` is
   rendered" above. It is the only one of the three unknown fields that turned
   out to work.
-- **Effect ids 130 and 141** appear in the Windows app's direction and speed
-  tables but are outside `TG_LIGHT_EFFECT_INDEX` (0-32). Probably the app's
-  software-rendered effects, streamed as frames. Unverified.
+- **Effect ids 128-147 are the app's software-rendered effects** — named and
+  enumerated, see "The software effects" above. Twenty of them, the PC renders
+  each frame and streams it with `LED_CMD_FRAME`. This bullet used to say "130
+  and 141 ... probably ... unverified"; the guess was right.
 - **`SetTimeToSleep`** — bytes known, deliberately unshipped; see `CLASS_POWER` above.
 - **Choosing a new key assignment.** `SetKeyAssign` is implemented and
   confirmed (above), but its only caller is `restore`: the bytes it sends are
