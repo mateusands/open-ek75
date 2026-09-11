@@ -841,6 +841,38 @@ wrote flag=1 speed=3 -> read back flag=1 speed=3
 
 So the bytes are accepted and persisted, not silently dropped.
 
+### `Speed` is rendered — the one field of the three that is
+
+**Confirmed visually.** With everything else held identical — same effect
+(`Wave`), same empty colour list, same brightness, same `flag` — only the speed
+byte was changed, 1 then 3, and a human watched:
+
+    speed=1  ->  the wave runs
+    speed=3  ->  clearly and obviously faster
+
+That closes the last of the three fields in `LED_CMD_EFFECT` whose rendering was
+unknown, and the three did not come out the same way:
+
+| Field | Stored by the firmware | Drawn | Seen on |
+|---|---|---|---|
+| `Speed` | yes | **yes** | region 1, `Wave` |
+| `Flag` (direction) | yes | no | region 1, `Wave`, twice |
+| `colors[1..4]` | yes | no | region 1, `Static` and `Wave` |
+
+Every row is one region and one or two effects. `Wave` is the effect all three
+were tested on because it is the only one the vendor gives a direction control
+and the only animated one with an obvious pace — not because it is
+representative of the other seventeen.
+
+Three fields, one packet, one round trip each saying "stored" — and three
+different answers to the only question that matters to a user. It is the
+clearest argument in this file for why "the firmware acknowledged it" is not a
+result, and why each of these needed its own look by a person.
+
+For `Speed` the range had already been settled without writing anything, by
+watching the firmware walk its own value under `Fn`+`←`/`→` (see "`Speed` is
+1-3"). That proved which numbers are legal. This proves they do something.
+
 ### The colour list past the first entry is stored and never drawn
 
 **Confirmed negative, twice, on two different kinds of effect.** The firmware
@@ -1399,9 +1431,104 @@ profiles: [1]   active: 1
 **One profile, and it is the active one.** This project previously stated "this
 code always uses profile 1" with nothing behind it; now it is measured. The
 consequence for the feature the owner asked for: Profile 2 and 3 are not
-hidden, they do not exist. They have to be **created** with `PFL_CMD_CREATE` —
-a persistent write whose only undo, `PFL_CMD_DELETE`, has never been sent to
-this hardware either. That is a slice of its own, not a detail to bolt on here.
+hidden, they do not exist *on the device*. Creating one there needs
+`PFL_CMD_CREATE`, a persistent write whose only undo, `PFL_CMD_DELETE`, has
+never been sent to this hardware either.
+
+That is not the same as saying the feature needs it. The next section is the
+investigation into exactly that question, and its answer is that the
+user-facing "Profile 1/2/3" is reachable with no device write at all — read it
+before treating `PFL_CMD_CREATE` as the way in.
+
+### Creating profiles 2 and 3: what the investigation found
+
+Asked to look without writing anything. The answer reframes the feature.
+
+**Nothing in the vendor's web driver creates a profile.** Counting definitions
+against call sites in `tgdevice.js` — which is a device-communication library,
+so read the limits of that on the next page before leaning on it:
+
+| Command | Defined | Called |
+|---|---|---|
+| `GetProfileIdList` | 1 | 2 |
+| `GetActiveProfileId` | 1 | 2 |
+| `SetActiveProfileId` | 2 | 1 |
+| `CreateProfile` | 1 | **0** |
+| `DeleteProfile` | 1 | **0** |
+| `ResetProfile` | 1 | **0** |
+
+The three writes exist in the HID layer and nothing in the driver invokes them —
+the same pattern as `MCO_CMD_SOTRAGE_INFO` and `MCO_CMD_MINI_DELAY`. The driver
+reads whatever profiles the firmware ships with and switches between them. On
+this keyboard that is one.
+
+**How far that evidence actually reaches.** `tgdevice.js` is the device layer,
+not the whole application: the site's UI code is not among the files in
+`docs/vendor-reference/`, and it is where the macro *encoder* turned out to live
+too. So the honest claim is "the driver's own orchestration never creates a
+profile", not "nothing anywhere does". What makes it more than nothing is that
+the sibling calls *are* here — `GetProfileInfo` calls `GetProfileIdList` and
+`GetActiveProfileId`, and `TgKeyboard.SetActiveProfileId` wraps the setter — so
+profile orchestration as a whole does live in this file, and creation is absent
+from it.
+
+Their packets are trivially known and identical in shape, which was never the
+difficulty:
+
+    CreateProfile / DeleteProfile / ResetProfile
+      HDR_SIZE=0, class 5, cmd 1|SET / 2|SET / 5|SET, HDR_PROFILE=target
+
+The difficulty is semantics, and there is **no reference flow to copy**: nothing
+says whether creating switches the active profile, whether a new profile starts
+empty or cloned, or what `DELETE` does to the one that is active. Sending them
+would be guessing four answers at once with "the keyboard stops typing" as the
+failure mode.
+
+### So what is "Profile 1 / 2 / 3" in the Windows app?
+
+Probably **not** device profiles, and the reasoning is worth keeping separable
+from the certainty:
+
+- the web driver never creates one, as above;
+- `Products/TK51G0101.dll` embeds `DefaultProfile.xml` as a **resource** — the
+  app carries at least one profile as XML on the PC, and that file's contents
+  are the factory lighting state this project independently read off the
+  hardware (see "`DefaultProfile.xml`").
+
+**The gap in this, stated plainly: the Windows app is a *second, independent*
+implementation of this protocol** (see "A second vendor source"). It is not
+bound by what the web driver does, and it could create device profiles through
+its own HID layer without any of the above being false. Nobody has looked at
+that half.
+
+`DefaultProfile.xml` cuts both ways, too: an embedded profile resource is what a
+PC-side profile store looks like, and it is equally what a **template written
+into a newly created device profile** looks like. It is evidence that the app
+holds profile data; it is not evidence of where that data ends up. Checking it means finding whether the app's assemblies reference
+`PFL_CMD_CREATE`, and it is the one piece of work that would turn "probably"
+into an answer.
+
+And `GetProfileConfig` says what a profile *is* from the driver's view:
+
+    GetProfileConfig = GetKeysFunction + GetDpiParameters + GetLightingParameters
+
+For a keyboard, with no DPI: **the key map and the lighting.** Which is exactly
+what `open-ek75 backup` already records and `restore` already puts back, both
+confirmed on hardware.
+
+### The safe way to ship this feature
+
+Named local profiles. Store several `backup`-format files, let the user pick
+one, apply it with the existing `restore` path. Zero new device writes, zero new
+packet shapes — and that holds regardless of how the question above turns out,
+which is the point. It does not need the vendor's app to work the same way; it
+only needs `backup` and `restore`, which are confirmed on this hardware.
+
+What it would NOT give: switching profiles with a key on the keyboard, which
+needs a real device profile and therefore `PFL_CMD_CREATE`. Nobody should send
+that byte without a captured reference from the real Dareu software — the same
+standard `CLASS_DFU` is held to, for the same reason: there is no way back that
+does not depend on the thing being tested.
 
 ### What is deliberately not implemented
 
@@ -1500,11 +1627,10 @@ coincidence; nothing here rests on it.)
   saying so. This bullet used to read "nothing has been written to hardware
   except `LED_CMD_EFFECT`"; that stopped being true when the brightness write,
   `SetKeyAssign` and the key-map restore were each confirmed on hardware.
-- **`Speed`, visually.** Its *range* is settled — the firmware walks its own
-  value 1-3 under `Fn`+`←`/`→` — but nobody has watched an animation speed up.
-  Stored and accepted is not rendered, which is the lesson `Flag` and the colour
-  list have now taught twice. (An earlier edit of this bullet dropped `Speed`
-  from the list by accident; it was never confirmed and is back.)
+- ~~**`Speed`, visually**~~ — **done.** `Wave` at speed 1 and at speed 3, with
+  every other field held identical, is visibly faster at 3. See "`Speed` is
+  rendered" above. It is the only one of the three unknown fields that turned
+  out to work.
 - **Effect ids 130 and 141** appear in the Windows app's direction and speed
   tables but are outside `TG_LIGHT_EFFECT_INDEX` (0-32). Probably the app's
   software-rendered effects, streamed as frames. Unverified.
