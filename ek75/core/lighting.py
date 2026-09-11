@@ -100,6 +100,36 @@ class Session:
                 out[region] = info
         return out
 
+    # --- key map (read-only) -------------------------------------------------
+
+    def read_key_assign(self, key_id, layer, profile_id=protocol.DEFAULT_PROFILE_ID):
+        """What one key does on one layer, or None if it does not answer."""
+        resp = device.command_process(
+            self.fd, protocol.build_get_key_assign(key_id, layer, profile_id))
+        if resp is None:
+            return None
+        return protocol.parse_key_assign_response(resp)
+
+    def read_key_map(self, key_ids, layers=(protocol.LAYER_BASE, protocol.LAYER_FN),
+                      profile_id=protocol.DEFAULT_PROFILE_ID):
+        """{(key_id, layer): assignment or None} for the ids given.
+
+        The ids are a parameter, not a range: this keyboard's run from 1 to 172
+        with gaps, so anything assuming `range(1, 84)` would read keys that do
+        not exist and miss ones that do. `core.layout` is where the real list
+        comes from; keeping it a parameter is what lets this module stay out of
+        the layout's business.
+
+        A key that does not answer gets None rather than aborting the sweep —
+        166 reads is enough for one of them to time out without the other 165
+        being worth throwing away. Measured: 1.56 s for the full map.
+        """
+        out = {}
+        for key_id in key_ids:
+            for layer in layers:
+                out[(key_id, layer)] = self.read_key_assign(key_id, layer, profile_id)
+        return out
+
     # --- power (read-only) ---------------------------------------------------
     # On Session rather than in a module of their own: gui/controller.py opens
     # exactly one `lighting.Session` for the worker thread, so a second session

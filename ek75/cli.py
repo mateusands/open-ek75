@@ -7,7 +7,7 @@ import argparse
 import sys
 import time
 
-from .core import device, lighting, protocol, state
+from .core import device, keymap, layout, lighting, protocol, state
 
 # Regions known on the hardware this was reverse-engineered against (a Husky
 # HTG-series unit, PID 0101). See PROTOCOL.md before assuming these are
@@ -217,6 +217,60 @@ def cmd_gui(args):
     return run()
 
 
+def cmd_keys(args):
+    """Print what each key is actually assigned to, read from the keyboard.
+
+    Read-only. This is the command that answers "is my keyboard still at factory
+    defaults?", which the vendor's device profile cannot: on the unit this was
+    built against, 23 of 166 assignments differ from it — see PROTOCOL.md.
+    """
+    profile = layout.load()
+    layers = ({"base": (protocol.LAYER_BASE,), "fn": (protocol.LAYER_FN,)}
+              .get(args.layer, (protocol.LAYER_BASE, protocol.LAYER_FN)))
+    with lighting.Session.open() as session:
+        live = session.read_key_map([k.id for k in profile.keys], layers=layers)
+
+    unread = differing = shown = 0
+    for key in profile.keys:
+        for layer in layers:
+            got = live[(key.id, layer)]
+            if got is None:
+                unread += 1
+                print(f"  {key.label:<11} {_LAYER_NAMES[layer]:<5} (no reply)")
+                continue
+            expected_id = (key.function_id if layer == protocol.LAYER_BASE
+                           else key.fn_function_id)
+            expected_data = list(key.function_data if layer == protocol.LAYER_BASE
+                                 else key.fn_function_data)
+            same = (got["function_id"], got["data"]) == (expected_id, expected_data)
+            if same:
+                if args.diff:
+                    continue
+            else:
+                differing += 1
+            label = keymap.describe(got["function_id"], got["data"])
+            text = label[0 if i18n_lang() == "en" else 1] if label else \
+                f"fid={got['function_id']} {got['data']}"
+            mark = "" if same else "  <- differs from the vendor profile"
+            print(f"  {key.label:<11} {_LAYER_NAMES[layer]:<5} {text}{mark}")
+            shown += 1
+
+    print(f"\n{shown} shown, {differing} differ from {profile.pid}.json"
+          + (f", {unread} unread" if unread else ""))
+    if differing:
+        print("The keyboard is the authority; the profile is the vendor's idea of "
+              "this PID. See PROTOCOL.md.")
+
+
+_LAYER_NAMES = {protocol.LAYER_BASE: "base", protocol.LAYER_FN: "fn"}
+
+
+def i18n_lang():
+    """The CLI is English-only; the GUI has the language switch. This exists so
+    keymap's (english, portuguese) pairs are indexed in one obvious place."""
+    return "en"
+
+
 def build_parser():
     p = argparse.ArgumentParser(prog="open-ek75",
         description="Configure a Dareu TK51G/EK75 keyboard on Linux "
@@ -270,6 +324,13 @@ def build_parser():
 
     p_gui = sub.add_parser("gui", help="open the graphical interface (tkinter)")
     p_gui.set_defaults(func=cmd_gui)
+
+    p_keys = sub.add_parser(
+        "keys", help="read-only: what each key is assigned to, from the keyboard")
+    p_keys.add_argument("--layer", choices=("base", "fn", "both"), default="both")
+    p_keys.add_argument("--diff", action="store_true",
+                         help="show only keys that differ from the vendor profile")
+    p_keys.set_defaults(func=cmd_keys)
 
     p_probe = sub.add_parser(
         "probe", help="read-only: regions, per-region attributes and effect lists")

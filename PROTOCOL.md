@@ -948,6 +948,77 @@ is not "send it and see" — so the bytes are recorded and the command is not sh
 Whoever implements it should say in the same breath how they intend to confirm it,
 and "the value read back" is not an answer to "does the keyboard sleep".
 
+## `CLASS_KEY` (1) — reading the key map
+
+Implemented **read-only**, via `KEY_CMD_ASSIGN`.
+
+    GetKeyAssign  HDR_SIZE=8, class 1, cmd 3|GET, HDR_PROFILE=profile
+      payload:    [0]=keyId  [1]=layer      0 = base, 1 = Fn
+      reply:      [2]=FunctionId  [3..7]=FunctionData (5 bytes)
+
+The reply has the same shape as the device profile's `default-function-Id` /
+`default-function-data` pair, so `ek75/core/keymap.py` decodes both with one
+function. Layer 0/1 meaning was not assumed: reading both back and matching them
+against the profile's base and Fn fields is what identifies which is which.
+
+Confirmed on hardware: **all 83 keys answered on both layers**, 166 reads in
+1.56 s, no failures. `KEY_CMD_BULK_ASSIGN` (8) exists and is not used — a second
+untested packet shape to save about a second is a bad trade.
+
+### The device profile disagrees with the keyboard — 23 times
+
+This is the most useful thing learned here, and it is a warning about every
+other use of `ek75/data/0101.json`.
+
+Sweeping the whole map and comparing it against the profile found **23
+assignments that differ**. The divergence is systematic rather than random:
+
+```
+Fn + W A S D    profile: mouse cursor        keyboard: ordinary keys
+Fn + Z X C V    profile: mouse buttons       keyboard: ordinary keys
+Fn + [          profile: cycle effect        keyboard: the "[" key
+Fn + Space      profile: cycle brightness    keyboard: Space
+Fn + Delete     profile: Windows/Mac layout  keyboard: Delete
+Page Down       profile: HID 75 (Page Up)    keyboard: HID 77 (End)
+```
+
+The entire mouse-emulation block is absent from this keyboard. The most likely
+explanation is that `0101.json` describes a **different variant behind the same
+PID** — Dareu's profile for `0101`, not Husky's Nomadic specifically.
+
+**What the keyboard actually binds for lighting**, none of which the profile
+gets right:
+
+| Function | Keys |
+|---|---|
+| `BrightnessAdjust` (54) | `Fn`+`↑` `Fn`+`↓` `Fn`+`-` `Fn`+`=` |
+| `LightingSpeed` (48) | `Fn`+`←` `Fn`+`→` |
+| `LightingModeV2` (53) | `Fn`+`\` `Fn`+`R-Alt` |
+| `LightingColorAdjustV2` (55) | `Fn`+`]` |
+
+**This corrects an earlier claim in this file.** The Fn-shortcut section above
+was derived from the profile and said this keyboard has no key bound to
+`LightingSpeed` (48), so `Speed` could not be settled by watching the firmware
+change its own state. That was wrong: `Fn`+`←`/`→` are exactly that, and the
+experiment is available after all. What survives is the conclusion about
+`LightingDirection` (49) — **no key binds it**, and that is now measured rather
+than inferred from a source that turned out to be unreliable.
+
+The consequence for the code: **the keyboard is the authority.** The GUI reads
+the map from the device and lists nothing when none is connected, rather than
+falling back to a profile known to be wrong for this unit. `open-ek75 keys
+--diff` prints the divergence for any unit.
+
+### Why `SetKeyAssign` is not implemented
+
+It is a write that has not been validated, and that is the whole reason.
+
+An earlier draft argued it was merely sequencing — that reading the map first
+gave us the backup the write would need. That was circular and does not survive
+inspection: `restore` cannot re-apply a key map without `SetKeyAssign`, so a
+backup of it would be a file nothing can use. The map is worth reading on its
+own; it is not a way back.
+
 ## What is not implemented yet
 
 - **Multi-colour effects** (anything needing `N > 1` in the colour list) —

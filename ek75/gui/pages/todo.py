@@ -9,6 +9,7 @@ named — rather than a greyed-out button that looks like a bug.
 """
 from tkinter import ttk
 
+from ...core import keymap, protocol
 from .. import i18n, theme
 from ..keyboard_view import KeyboardView
 
@@ -34,17 +35,41 @@ class TodoPage(ttk.Frame):
             # A neutral, unlit look: this page previews the layout, not an effect.
             self._view.set_preview(1, [(60, 66, 74)], brightness=255)
             self._view.set_preview(1, [(48, 52, 58)], brightness=255, side=True)
-            self._selected = ttk.Label(self, text="", style="Value.TLabel")
+            self._selected = ttk.Label(self, text=i18n.t("keys_click"),
+                                        style="Value.TLabel")
             self._selected.pack(anchor="w", pady=(6, 0))
+            self._key_map = None
 
     def _on_key_click(self, key):
-        self._selected.configure(
-            text=f"KeyID {key.id}  ·  {key.label}  ·  "
-                 f"default function {key.function_id} {key.function_data}  ·  "
-                 f"Fn function {key.fn_function_id} {key.fn_function_data}")
+        """Show what the KEYBOARD says this key does, not what the profile says.
+
+        The two disagree on this hardware for 23 assignments, and the profile is
+        the vendor's description of the PID rather than of the unit in front of
+        you — which is the entire question this page exists to answer.
+        """
+        if self._key_map is None:
+            self._selected.configure(text=i18n.t("fn_reading"))
+            return
+        parts = [f"KeyID {key.id}  ·  {key.label}"]
+        for layer, name in ((protocol.LAYER_BASE, i18n.t("keys_base")),
+                            (protocol.LAYER_FN, i18n.t("keys_fn"))):
+            got = self._key_map.get((key.id, layer))
+            if got is None:
+                continue
+            described = keymap.describe(got["function_id"], got["data"])
+            text = (described[0 if i18n.LANG == "en" else 1] if described
+                    else f"fid={got['function_id']} {got['data']}")
+            parts.append(f"{name}: {text}")
+        parts.append(f"({i18n.t('keys_live')})")
+        self._selected.configure(text="   ·   ".join(parts))
 
     def refresh(self):
-        pass
+        if self._view is None or self._key_map is not None:
+            return                      # the window caches it for the session
+        self.app.request_key_map(self._store_key_map)
+
+    def _store_key_map(self, key_map):
+        self._key_map = key_map
 
     def destroy(self):
         if self._view is not None:

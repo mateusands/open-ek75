@@ -103,13 +103,38 @@ class HomePage(ttk.Frame):
                   style="PanelMuted.TLabel", justify="left").pack(anchor="w",
                                                                    pady=(0, 8))
 
-        shortcuts = keymap.fn_shortcuts(self.profile)
+        # The rows are filled by _show_fn_shortcuts once the keyboard answers.
+        # Nothing is listed from the vendor profile: 23 of its assignments
+        # disagree with this hardware, so a profile-derived list would name the
+        # wrong function for 11 of these rows. Better empty than wrong.
+        self._fn_grid_holder = ttk.Frame(card.body, style="Panel.TFrame")
+        self._fn_grid_holder.pack(fill="both", expand=True)
+        self._fn_status = ttk.Label(self._fn_grid_holder, text=i18n.t("fn_reading"),
+                                     style="PanelMuted.TLabel", justify="left")
+        self._fn_status.pack(anchor="w")
+        self._fn_grid = None
+
+    def _load_fn_shortcuts(self):
+        self.app.request_key_map(self._on_key_map)
+
+    def _on_key_map(self, key_map):
+        if key_map is None:
+            self._fn_status.configure(text=i18n.t("fn_needs_device"))
+            return
+        self._show_fn_shortcuts(keymap.fn_shortcuts_from_map(self.profile, key_map))
+
+    def _show_fn_shortcuts(self, shortcuts):
+        """Render the live list. Called on the Tk thread by the controller."""
+        if self._fn_grid is not None:
+            self._fn_grid.destroy()
+        self._fn_status.pack_forget()
         columns = 3
         # 38 rows over three columns is more than fits at any sane window
         # height, so the list scrolls rather than being silently truncated.
-        scroller = ScrollFrame(card.body, background=theme.BG_PANEL,
+        scroller = ScrollFrame(self._fn_grid_holder, background=theme.BG_PANEL,
                                 body_style="Panel.TFrame")
         scroller.pack(fill="both", expand=True)
+        self._fn_grid = scroller
         grid = scroller.body
         for column in range(columns):
             grid.grid_columnconfigure(column, weight=1, uniform="fn")
@@ -148,6 +173,8 @@ class HomePage(ttk.Frame):
         self.controller.submit(
             "read-sleep", lambda session: session.read_sleep(),
             on_done=self._show_sleep, on_error=self.app.report_error)
+
+        self._load_fn_shortcuts()
 
         self.controller.submit(
             "read-regions", lambda session: session.region_ids(),

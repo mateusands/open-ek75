@@ -43,6 +43,11 @@ class App(tk.Tk):
         self._current = None
         self._auto_backup_done = False
         self._permission_warned = False
+        # The key map is 166 reads (~1.6 s). It belongs to the window, not to a
+        # page: two pages want it, the worker queue is serial, and a per-page
+        # read would sweep the keyboard twice for the same answer.
+        self.key_map = None
+        self._key_map_waiters = []
 
         self._build()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -184,6 +189,35 @@ class App(tk.Tk):
         self.set_status(i18n.t("connected", path=path), kind="ok")
         self._auto_backup()
         self._pages[self._current].refresh()
+
+    def request_key_map(self, callback):
+        """Call `callback(key_map)` once the map is available, reading it at most
+        once per session. Callers that arrive while a read is in flight are
+        queued rather than starting a second one."""
+        if self.key_map is not None:
+            callback(self.key_map)
+            return
+        self._key_map_waiters.append(callback)
+        if len(self._key_map_waiters) > 1:
+            return                                   # a read is already in flight
+        self.controller.submit(
+            "read-key-map",
+            lambda session: session.read_key_map(
+                [k.id for k in self.profile.keys]),
+            on_done=self._key_map_ready,
+            on_error=self._key_map_failed)
+
+    def _key_map_ready(self, key_map):
+        self.key_map = key_map
+        waiters, self._key_map_waiters = self._key_map_waiters, []
+        for callback in waiters:
+            callback(key_map)
+
+    def _key_map_failed(self, error):
+        waiters, self._key_map_waiters = self._key_map_waiters, []
+        for callback in waiters:
+            callback(None)
+        self.report_error(error)
 
     def _auto_backup(self):
         """Take one backup the first time this machine connects, never overwrite."""

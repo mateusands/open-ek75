@@ -48,8 +48,17 @@ STRINGS = {
         "rgb_mode": "RGB (the keyboard picks)",
         "color_rgb_only": "This effect is RGB only — the firmware picks its\ncolours and ignores any you send.",
         "fn_guide": "Fn shortcuts",
-        "fn_guide_hint": ("Read from the keyboard's own default key map. None of\n"
-                           "this is printed on the case."),
+        "fn_needs_device": ("Connect the keyboard to read its shortcuts.\n"
+                             "They are not listed from the vendor profile: on the unit\n"
+                             "this was built against, 23 of its assignments disagree\n"
+                             "with the hardware. See PROTOCOL.md."),
+        "fn_reading": "Reading the key map…",
+        "keys_live": "Read from the keyboard",
+        "keys_base": "Base",
+        "keys_fn": "Fn",
+        "keys_click": "Click a key to see what it is assigned to.",
+        "fn_guide_hint": ("Read from the keyboard itself, not from the vendor's\n"
+                           "profile. None of this is printed on the case."),
         "fn_search": "Filter",
         "color_ignored": "This zone ignores the colour for this effect —\nit renders a fixed pattern. See PROTOCOL.md.",
         "apply": "Apply",
@@ -183,7 +192,16 @@ STRINGS = {
         "rgb_mode": "RGB (o teclado escolhe)",
         "color_rgb_only": "Este efeito é só RGB — o firmware escolhe as cores\ne ignora qualquer uma que você envie.",
         "fn_guide": "Atalhos com Fn",
-        "fn_guide_hint": ("Lidos do mapa de teclas padrão do próprio teclado.\n"
+        "fn_needs_device": ("Conecte o teclado para ler os atalhos dele.\n"
+                             "Eles não são listados a partir do perfil do fabricante:\n"
+                             "na unidade em que isto foi construído, 23 atribuições dele\n"
+                             "discordam do hardware. Veja o PROTOCOL.md."),
+        "fn_reading": "Lendo o mapa de teclas…",
+        "keys_live": "Lido do teclado",
+        "keys_base": "Base",
+        "keys_fn": "Fn",
+        "keys_click": "Clique numa tecla para ver a atribuição dela.",
+        "fn_guide_hint": ("Lidos do próprio teclado, não do perfil do fabricante.\n"
                            "Nada disso vem impresso no case."),
         "fn_search": "Filtrar",
         "color_ignored": "Esta zona ignora a cor neste efeito — ela mostra\num padrão fixo. Veja PROTOCOL.md.",

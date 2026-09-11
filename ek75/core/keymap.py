@@ -41,12 +41,25 @@ FUNCTION_NAMES = {
     55: ("Cycle lighting colour", "Trocar cor da iluminação"),
 }
 
-# --- USB HID Keyboard page (0x07) — the usages this keyboard's Fn layer emits -
-# Only the ones that differ from simply repeating the key's own letter; the
-# pass-throughs are filtered out before display anyway.
+# --- USB HID Keyboard page (0x07) -------------------------------------------
+# Complete for what this hardware emits, not just for the Fn layer. The earlier
+# version held 20 entries because it was written to describe Fn *shortcuts*,
+# where a key that just types its own letter is noise worth dropping. Read the
+# base layer with that table and 66 of 79 keys come back undescribed, so the
+# filtering moved out of the table (see `describe` vs `fn_shortcuts`) and the
+# table became complete.
+#
+# Values are the standard USB HID Usage Tables, Keyboard/Keypad page 0x07 —
+# a public specification, not vendor material. A test asserts this covers every
+# usage the device profile actually contains, so a gap fails rather than
+# silently rendering a key as unknown.
 HID_KEYS = {
     40: ("Enter", "Enter"), 41: ("Esc", "Esc"), 42: ("Backspace", "Backspace"),
-    43: ("Tab", "Tab"), 44: ("Space", "Espaço"), 57: ("Caps Lock", "Caps Lock"),
+    43: ("Tab", "Tab"), 44: ("Space", "Espaço"),
+    45: ("-", "-"), 46: ("=", "="), 47: ("[", "["), 48: ("]", "]"),
+    49: ("\\", "\\"), 50: ("#", "#"), 51: (";", ";"), 52: ("'", "'"),
+    53: ("`", "`"), 54: (",", ","), 55: (".", "."), 56: ("/", "/"),
+    57: ("Caps Lock", "Caps Lock"),
     70: ("Print Screen", "Print Screen"), 71: ("Scroll Lock", "Scroll Lock"),
     72: ("Pause / Break", "Pause / Break"), 73: ("Insert", "Insert"),
     74: ("Home", "Home"), 75: ("Page Up", "Page Up"), 76: ("Delete", "Delete"),
@@ -55,6 +68,17 @@ HID_KEYS = {
     81: ("Down arrow", "Seta baixo"), 82: ("Up arrow", "Seta cima"),
     83: ("Num Lock", "Num Lock"),
 }
+
+# Usages 4-29 are A-Z and 30-39 are 1-9 then 0, contiguously, by definition of
+# the HID page. Generated rather than typed out: 36 hand-written lines is 36
+# chances at a transposed digit, and the label is the same in both languages.
+for _usage, _letter in enumerate("ABCDEFGHIJKLMNOPQRSTUVWXYZ", start=4):
+    HID_KEYS[_usage] = (_letter, _letter)
+for _usage, _digit in enumerate("1234567890", start=30):
+    HID_KEYS[_usage] = (_digit, _digit)
+for _n in range(1, 13):                            # 58-69 are F1-F12
+    HID_KEYS[57 + _n] = (f"F{_n}", f"F{_n}")
+del _usage, _letter, _digit, _n
 
 # --- USB HID Consumer page (0x0C) — the media keys on the F-row --------------
 CONSUMER_KEYS = {
@@ -77,34 +101,51 @@ CONSUMER_KEYS = {
 _SELF_DESCRIBING = set(FUNCTION_NAMES) - {1, 6, 8, 32}
 
 
-def describe_fn(key):
-    """What `Fn` + this key does, as an (english, portuguese) pair, or None.
+def describe(function_id, data):
+    """What one assignment does, as an (english, portuguese) pair, or None.
 
-    None means "nothing worth showing": either the key has no Fn assignment, or
-    its Fn layer just repeats the key itself (Fn+E typing an `e`), which is the
-    common case on this keyboard and would bury the useful rows in noise.
+    Takes the raw pair so the live reply from `KEY_CMD_ASSIGN` and the profile's
+    stored defaults go through the same decoder — the alternative is two copies
+    of the rule that drift apart the first time one is corrected.
+
+    None means "nothing to say": a bare modifier with no usage byte, or a code
+    outside the tables here. It does NOT mean "does nothing" — the Fn-shortcut
+    list adds its own filtering on top, and that filtering is deliberately not
+    part of this function.
     """
-    fid = key.fn_function_id
-    if fid is None:
+    if data is None:                               # a key that did not answer
         return None
-    data = list(key.fn_function_data) + [0, 0, 0, 0, 0]
+    data = list(data) + [0, 0, 0, 0, 0]
 
-    if fid == 6:                                   # CombineKey: a keyboard usage
+    if function_id == 6:                           # CombineKey: a keyboard usage
         usage = data[1]
         if usage == 0:                             # a bare modifier (Fn+Shift)
             return None
-        named = HID_KEYS.get(usage)
-        if named is None:
-            return None                            # a plain letter/digit: noise
-        return named
+        return HID_KEYS.get(usage)
 
-    if fid == 8:                                   # MediaKeys: a consumer usage
+    if function_id == 8:                           # MediaKeys: a consumer usage
         return CONSUMER_KEYS.get((data[0] << 8) | data[1])
 
-    if fid in _SELF_DESCRIBING:
-        return FUNCTION_NAMES[fid]
+    return FUNCTION_NAMES.get(function_id)
 
-    return FUNCTION_NAMES.get(fid)
+
+def describe_fn(key):
+    """What `Fn` + this key does according to the *device profile*, or None.
+
+    Reads the JSON's stored defaults, which is all that is available with no
+    keyboard connected. When one is connected, prefer the live reply — this
+    keyboard was measured disagreeing with its own profile on 23 assignments.
+
+    None means "nothing worth showing in a shortcut list": no Fn assignment, a
+    bare modifier, or a plain letter that only repeats itself. That last filter
+    is why this is not the same function as `describe`.
+    """
+    if key.fn_function_id is None:
+        return None
+    described = describe(key.fn_function_id, key.fn_function_data)
+    if described is None:
+        return None
+    return described
 
 
 def is_passthrough(key):
@@ -129,6 +170,33 @@ def fn_shortcuts(profile):
         if is_passthrough(key):
             continue
         described = describe_fn(key)
+        if described is not None:
+            out.append((key.label, described))
+    return out
+
+
+def fn_shortcuts_from_map(profile, key_map):
+    """The Fn shortcuts this keyboard *actually* has, from a live key map.
+
+    `key_map` is what `lighting.Session.read_key_map` returns:
+    {(key_id, layer): assignment or None}. `profile` supplies the key labels,
+    which the wire does not carry — a reply says what a key does, never what is
+    printed on it.
+
+    Same shape and same filtering as `fn_shortcuts`, and for the same reason: a
+    key whose Fn layer repeats its base layer is not a shortcut. The difference
+    is the source, and on the unit this was written against the two disagree for
+    23 assignments — which is the whole reason this function exists.
+    """
+    out = []
+    for key in profile.keys:
+        base = key_map.get((key.id, 0))
+        fn = key_map.get((key.id, 1))
+        if fn is None:
+            continue
+        if base is not None and base == fn:        # Fn repeats the base layer
+            continue
+        described = describe(fn["function_id"], fn["data"])
         if described is not None:
             out.append((key.label, described))
     return out
