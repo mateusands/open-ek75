@@ -1,3 +1,9 @@
+# ─── CrewWatch kit upstream checkout: reference only, never committed ────────
+# A clone of github.com/mateusands/claude-code-crew-kit, kept here to diff what
+# .claude/ has against what upstream ships. It is someone else's repository
+# with its own history — it must never become part of this one.
+crewkit/
+
 # ─── Vendor binaries: proprietary, never committed ───────────────────────────
 # Husky's Windows app, kept locally as the reference behind docs/PROTOCOL.md's
 # "A second vendor source". This rule is deliberately SEPARATE from the docs/
