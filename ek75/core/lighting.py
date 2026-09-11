@@ -100,6 +100,27 @@ class Session:
                 out[region] = info
         return out
 
+    # --- power (read-only) ---------------------------------------------------
+    # On Session rather than in a module of their own: gui/controller.py opens
+    # exactly one `lighting.Session` for the worker thread, so a second session
+    # class would have no way to reach the GUI. The module name is now narrower
+    # than what it holds; renaming it is a separate change.
+
+    def read_battery(self):
+        """Charge and charging state, or None if the device does not answer."""
+        resp = device.command_process(self.fd, protocol.build_get_battery_status())
+        if resp is None:
+            return None
+        return protocol.parse_battery_status_response(resp)
+
+    def read_sleep(self, profile_id=protocol.DEFAULT_PROFILE_ID):
+        """The idle timeout stored for one profile, or None if unanswered."""
+        resp = device.command_process(
+            self.fd, protocol.build_get_time_to_sleep(profile_id))
+        if resp is None:
+            return None
+        return protocol.parse_time_to_sleep_response(resp)
+
     # --- writes --------------------------------------------------------------
 
     def set_effect(self, region_id, effect, colors, flag=0, speed=0):

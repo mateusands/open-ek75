@@ -18,8 +18,10 @@ from ..widgets import Card, ScrollFrame
 MISSING_FEATURES = [
     ("todo_connection", "CLASS_POWER"),
     ("todo_profiles", "CLASS_PROFILE"),
-    ("todo_sleep", "CLASS_POWER — GetTimeToSleep/SetTimeToSleep"),
-    ("todo_battery", "CLASS_POWER — GetBatteryStatus"),
+    # Reading the sleep timer landed; SetTimeToSleep did not, because its effect
+    # cannot be seen on the cable (the keyboard does not sleep while on USB), and
+    # this project does not ship a write it cannot validate — see PROTOCOL.md.
+    ("todo_sleep", "CLASS_POWER — SetTimeToSleep"),
 ]
 
 
@@ -48,6 +50,7 @@ class HomePage(ttk.Frame):
                            ("node", i18n.t("device_node")),
                            ("firmware", i18n.t("device_firmware")),
                            ("battery", i18n.t("device_battery")),
+                           ("sleep", i18n.t("device_sleep")),
                            ("regions", i18n.t("device_regions"))):
             row = ttk.Frame(info.body, style="Panel.TFrame")
             row.pack(fill="x", pady=2)
@@ -131,15 +134,48 @@ class HomePage(ttk.Frame):
         self._rows["pid"].configure(
             text=f"{device.VID:04x}:{device.PID:04x}")
         self._rows["firmware"].configure(text=self.profile.firmware_version or "—")
-        self._rows["battery"].configure(
-            text=i18n.t("yes") if self.profile.has_battery else i18n.t("no"))
         self._rows["node"].configure(text=device.find_device() or "—")
+
+        if self.profile.has_battery:
+            self._rows["battery"].configure(text=i18n.t("battery_reading"))
+            self.controller.submit(
+                "read-battery", lambda session: session.read_battery(),
+                on_done=self._show_battery, on_error=self.app.report_error)
+        else:
+            self._rows["battery"].configure(text=i18n.t("no"))
+
+        self._rows["sleep"].configure(text=i18n.t("battery_reading"))
+        self.controller.submit(
+            "read-sleep", lambda session: session.read_sleep(),
+            on_done=self._show_sleep, on_error=self.app.report_error)
 
         self.controller.submit(
             "read-regions", lambda session: session.region_ids(),
             on_done=lambda payload: self._rows["regions"].configure(
                 text=f"{payload[0]}  ({payload[1]})"),
             on_error=self.app.report_error)
+
+    def _show_battery(self, info):
+        """`info` is None when the device did not answer — say so rather than
+        leaving the row reading "reading…" forever."""
+        if info is None:
+            self._rows["battery"].configure(text=i18n.t("battery_unknown"))
+            return
+        # `status` and `critical` are raw bytes with no documented meaning; the
+        # percentage is the only part of this reply that can be shown honestly.
+        percent = info["percent"]
+        self._rows["battery"].configure(
+            text=f"{percent}%" if percent is not None
+            else f"{info['level']}/{info['max_level']}")
+
+    def _show_sleep(self, info):
+        if info is None:
+            self._rows["sleep"].configure(text=i18n.t("battery_unknown"))
+        elif not info["enabled"]:
+            self._rows["sleep"].configure(text=i18n.t("sleep_disabled"))
+        else:
+            self._rows["sleep"].configure(
+                text=i18n.t("sleep_minutes", minutes=info["minutes"]))
 
     # --- actions -------------------------------------------------------------
 
