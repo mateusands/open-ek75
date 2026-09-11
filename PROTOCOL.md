@@ -1741,8 +1741,45 @@ which would have produced two *different* wrong colours.
 `payload[3]` and `payload[4]` are accepted at every value from 0 to 89 without
 changing anything, which is what a field the firmware is not reading looks like.
 
-So something else has to happen before a frame means what it says. Candidates,
-in the order worth trying:
+### Why, most likely: the vendor's app never streams to this keyboard either
+
+`TgDevice::SetLedFrame` — the top of the app's own frame path — dispatches on
+the region's `LedType` and on nothing else:
+
+    LedType == 1  ->  SetSingleLedFrame
+    LedType == 3  ->  SetMultiLedFrame
+    anything else ->  returns 0, sends nothing
+
+`LedType` comes from the device: it is written in `GetHardWare` from the reply
+this project already reads as `region_attribute()["type"]`. And **both regions
+of this keyboard report type 4**:
+
+    region 1: LedType=4  fps=33  matrix 6x15
+    region 4: LedType=4  fps=33  matrix 1x16
+
+Searching the whole of `DeviceBase.dll` for a comparison against `LedType`
+returns exactly four, in two methods — `SetLedFrame` and
+`InitLedDynamicParam` — and all four are against 1 or 3. Nothing anywhere
+handles 4.
+
+So the official software has no frame path for this model, which explains the
+observed behaviour better than any packet-layout theory: the frames are
+accepted by the firmware and do nothing coherent because **nobody has ever sent
+one to a type-4 region**, the vendor included. Effect 18 being in the region's
+advertised effect list says the firmware has the *capability*; it does not say
+the vendor ever drove it here.
+
+**What this means for the feature.** Per-key colour and the twenty `Sw` effects
+are very likely not available on this keyboard in the official app either — so
+they are not a parity gap, they are a capability of the chip family that this
+unit's type-4 regions do not expose through any known software. Anyone
+continuing should find a Dareu product whose regions report type 1 or 3 and
+capture what the app sends to it; guessing a type-4 frame format from here has
+no reference to check against, which is the situation golden rule 2 exists for.
+
+The three candidates below were written before this was found. They are kept
+because they are still the cheap things to try if someone wants to push, and
+because being wrong about *why* is worth recording:
 
 - **a mode command before streaming.** `LED_CMD_CAL_DATA` (5) and the rest of
   the dead-enum band have never been looked at, and one of them plausibly says
