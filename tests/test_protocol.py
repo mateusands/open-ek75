@@ -1644,6 +1644,144 @@ def test_save_custom_led_layout():
     assert protocol.build_save_custom_led(profile_id=1) == expected
 
 
+def test_macro_modifier_usages_are_a_different_table_from_combinekeys_bitmask():
+    """0xE0-0xE7 name the same eight modifiers HID_MODIFIERS does, from the
+    other side: a macro's own usage byte instead of CombineKey's data[0] bit.
+    Reusing HID_MODIFIERS directly (bit values 1,2,4...) would look up usage
+    0xE0 = 224 in a table whose keys top out at 128, and find nothing — which
+    is exactly the mistake this table exists to make impossible.
+    """
+    from ek75.core import keymap
+
+    assert keymap.HID_MODIFIER_USAGES[0xE0] == ("Left Ctrl", "Ctrl esquerdo")
+    assert keymap.HID_MODIFIER_USAGES[0xE7] == ("Right Win", "Win direito")
+    assert len(keymap.HID_MODIFIER_USAGES) == 8
+    # HID_MODIFIERS is keyed by bit value (1, 2, 4...); 224 (0xE0) is not one.
+    assert 224 not in dict(keymap.HID_MODIFIERS)
+
+    # describe_macro_usage covers both axes: modifiers and ordinary keys.
+    assert keymap.describe_macro_usage(0xE0) == ("Left Ctrl", "Ctrl esquerdo")
+    assert keymap.describe_macro_usage(4) == ("A", "A")          # HID_KEYS
+    assert keymap.describe_macro_usage(0x00) is None
+
+
+def test_decode_this_keyboards_real_macro():
+    """The strongest oracle available: this keyboard's own stored macro.
+
+    Decoded by hand from `OEMDriver.Pages.PageMacroTg::ParseKeyboardData` in the
+    Windows app, walked instruction by instruction — not from running this
+    decoder on itself. Every one of the 27 bytes this keyboard actually holds
+    (macro id 1, read via CLASS_MACRO in an earlier slice) is consumed, with
+    nothing left over: three taps of Left Ctrl, a couple of seconds apart, the
+    shape of an anti-idle macro.
+
+    `0x04`/`0x05`/`0x0A`/`0x0B` are the only opcodes this asserts against real
+    device data — the other two opcodes this format defines (0x0C, 0x0D) are
+    tested separately, from hand-built bytes, because neither has ever been
+    seen in a real macro. See PROTOCOL.md's `CLASS_MACRO` section.
+    """
+    from ek75.core import protocol
+    data = bytes.fromhex(
+        "04e00a8005e00b095e04e00a6d05e00b079d04e00a5f05e00b0471")
+    steps = protocol.parse_macro_steps(data)
+
+    assert steps == [
+        {"op": "keydown", "usage": 0xE0},
+        {"op": "delay", "ms": 128},
+        {"op": "keyup", "usage": 0xE0},
+        {"op": "delay", "ms": 2398},
+        {"op": "keydown", "usage": 0xE0},
+        {"op": "delay", "ms": 109},
+        {"op": "keyup", "usage": 0xE0},
+        {"op": "delay", "ms": 1949},
+        {"op": "keydown", "usage": 0xE0},
+        {"op": "delay", "ms": 95},
+        {"op": "keyup", "usage": 0xE0},
+        {"op": "delay", "ms": 1137},
+    ]
+
+
+def test_macro_opcodes_never_seen_in_real_data():
+    """`0x0C` and `0x0D` exist in the vendor's encoder and in no macro this
+    project has ever read. Hand-built rather than device-derived — the
+    docstring on the previous test is the reason this one exists separately.
+    """
+    from ek75.core import protocol
+
+    # 0x0C: a 3-byte, big-endian delay up to 16777215 ms.
+    assert protocol.parse_macro_steps(bytes.fromhex("0c010203")) == [
+        {"op": "delay", "ms": 0x010203}]
+
+    # 0x0D: a random delay, two 2-byte big-endian bounds.
+    assert protocol.parse_macro_steps(bytes.fromhex("0d00640bb8")) == [
+        {"op": "random_delay", "min_ms": 0x0064, "max_ms": 0x0bb8}]
+
+    # The vendor's own encoder does not validate min <= max (read from its IL);
+    # this decoder does not invent a check the format itself does not have.
+    assert protocol.parse_macro_steps(bytes.fromhex("0d0bb80064")) == [
+        {"op": "random_delay", "min_ms": 0x0bb8, "max_ms": 0x0064}]
+
+
+def test_format_macro_steps_is_the_one_shared_entry_point():
+    """`cli.py` and `gui/pages/macros.py` both call this, not `parse_macro_steps`
+    directly — one place decides what a step reads like, and one place decides
+    what an unparseable byte reads like, so the two front ends cannot drift.
+
+    Each entry is an (english, portuguese) pair, same shape every other
+    bilingual label in this project uses (see `keymap.describe`).
+    """
+    from ek75.core import keymap
+
+    lines = keymap.format_macro_steps(bytes.fromhex("04e00a80"))
+    assert lines == [
+        ("Key down: Left Ctrl", "Tecla pressionada: Ctrl esquerdo"),
+        ("Wait 128 ms", "Espera 128 ms"),
+    ]
+
+    # A usage neither table names: shown as the raw byte, not silently blank.
+    lines = keymap.format_macro_steps(bytes.fromhex("0400"))
+    assert "0x00" in lines[0][0]
+
+    # Truncated and unknown bytes read as prose, in both languages, never as a
+    # raised exception reaching the caller.
+    assert keymap.format_macro_steps(bytes.fromhex("04"))[0][0] \
+        .startswith("(cut off")
+    assert keymap.format_macro_steps(bytes.fromhex("04"))[0][1] \
+        .startswith("(cortado")
+    assert "Unknown" in keymap.format_macro_steps(bytes.fromhex("ff"))[0][0]
+    assert "desconhecido" in keymap.format_macro_steps(bytes.fromhex("ff"))[0][1]
+
+
+def test_macro_decoder_never_raises_on_bad_input():
+    """This decodes bytes read from a device, not from this project's own
+    encoder — which does not exist yet. Garbage in must not become an
+    exception; it must become something the caller can show and move past.
+    """
+    from ek75.core import protocol
+
+    assert protocol.parse_macro_steps(b"") == []
+
+    # A keydown missing its usage byte: exactly one marker, nothing else — a
+    # loose `truncated[-1]["op"] == "truncated"` would also pass if a phantom
+    # step were emitted before the marker, which is precisely the bug this
+    # decoder must not have.
+    assert protocol.parse_macro_steps(bytes.fromhex("04")) == \
+        [{"op": "truncated"}]
+
+    # A delay whose 2-byte payload is cut to 1.
+    assert protocol.parse_macro_steps(bytes.fromhex("0b09")) == \
+        [{"op": "truncated"}]
+
+    # An opcode this table does not define.
+    unknown = protocol.parse_macro_steps(bytes.fromhex("ff"))
+    assert unknown == [{"op": "unknown", "opcode": 0xFF}]
+
+    # Known steps before an unknown byte are kept, not discarded wholesale.
+    mixed = protocol.parse_macro_steps(bytes.fromhex("04e0ff"))
+    assert mixed[0] == {"op": "keydown", "usage": 0xE0}
+    assert mixed[1] == {"op": "unknown", "opcode": 0xFF}
+
+
 # --- CLASS_MACRO (6), read-only ---------------------------------------------
 
 def test_get_macro_id_list_probe():

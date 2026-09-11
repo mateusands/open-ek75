@@ -196,9 +196,10 @@ class Session:
         """One macro's recorded bytes, or None if unanswered.
 
         Two-byte length, because a macro can be longer than a single byte could
-        describe. The bytes' meaning is not decoded here and is not documented
-        anywhere this project has access to — a caller gets the size and the
-        raw content, which is what can be shown honestly.
+        describe. Returns raw bytes, not decoded steps — decoding is pure logic
+        with no device I/O, so it lives in `keymap.format_macro_steps` and
+        every caller (cli.py, gui/) goes through that one function rather than
+        each deciding on its own what an unparseable byte should read like.
         """
         return device.get_multipacket(
             self.fd, 0, protocol.CLASS_MACRO, protocol.MCO_CMD_MEMORY,

@@ -268,8 +268,9 @@ def cmd_probe(args):
                 if data is None:
                     print(f"          {macro_id}: no reply")
                 else:
-                    print(f"          {macro_id}: {len(data)} bytes  "
-                          f"{data.hex(' ')}")
+                    print(f"          {macro_id}: {len(data)} bytes")
+                    for en, _pt in keymap.format_macro_steps(data):
+                        print(f"            {en}")
 
         ids, source = session.region_ids()
         print(f"regions: {ids}   (source: {source})")

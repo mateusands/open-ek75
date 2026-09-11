@@ -6,14 +6,16 @@ Read-only. Every macro write — creating, deleting, naming, storing the recorde
 bytes — is unported, and the page says so rather than showing a control that
 cannot work.
 
-The recorded bytes are shown raw because they have not been decoded: the
-vendor's web driver passes macro data straight through, and the code that builds
-it lives in the site's UI layer, which is not among the files this project has.
-Showing a guess at the keystrokes would be inventing a format.
+The recorded steps ARE decoded, through `keymap.format_macro_steps` — the one
+shared entry point `cli.py` also calls, so the two front ends cannot drift on
+what a step means or on how a parse failure is shown. See PROTOCOL.md's
+`CLASS_MACRO` section for where the format came from and which opcodes are
+confirmed against real device data versus read only from the vendor's encoder.
 """
 import tkinter as tk
 from tkinter import ttk
 
+from ...core import keymap
 from .. import i18n, theme
 from ..widgets import Card, ScrollFrame
 
@@ -103,8 +105,11 @@ class MacrosPage(ttk.Frame):
                 continue
             ttk.Label(row, text=i18n.t("macros_size", bytes=len(recorded)),
                       style="PanelMuted.TLabel").pack(anchor="w")
-            tk.Label(row, text=recorded.hex(" "), bg=theme.BG_SUNKEN,
-                     fg=theme.FG, font=theme.FONT_MONO, justify="left",
+            steps = keymap.format_macro_steps(recorded)
+            index = 0 if i18n.LANG == "en" else 1
+            text = "\n".join(line[index] for line in steps)
+            tk.Label(row, text=text, bg=theme.BG_SUNKEN, fg=theme.FG,
+                     font=theme.FONT_MONO, justify="left",
                      wraplength=540, padx=8, pady=6).pack(anchor="w", pady=(4, 0))
 
 

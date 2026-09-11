@@ -1620,6 +1620,8 @@ public table `keymap.HID_KEYS` already carries. Modifiers are spelled out as
 their own usages, `0xE0`-`0xE7` — a *different* encoding from `CLASS_KEY`'s
 `CombineKey`, which packs them into a `data[0]` bitmask instead. Two encodings
 for the same physical key, in two corners of one protocol.
+`keymap.HID_MODIFIER_USAGES` is that table; `keymap.describe_macro_usage`
+checks it before falling through to `HID_KEYS` for an ordinary key.
 
 Decoding this keyboard's 27 bytes with that table consumes all of them, with
 nothing left over:
@@ -1628,8 +1630,19 @@ nothing left over:
     KEYDOWN Left Ctrl -> wait 109ms -> KEYUP -> wait 1949ms
     KEYDOWN Left Ctrl -> wait  95ms -> KEYUP -> wait 1137ms
 
-Three taps of Left Ctrl a couple of seconds apart — an anti-idle macro. An
-earlier draft of this section guessed the bytes were length-prefixed records
+Three taps of Left Ctrl a couple of seconds apart — an anti-idle macro.
+`protocol.parse_macro_steps` implements the table above and
+`keymap.format_macro_steps` turns its output into the lines `probe` and the
+GUI's Macros page both print — one shared function, so the two front ends
+cannot show different words for the same bytes.
+
+**Confidence is not uniform across the six opcodes.** `0x04`/`0x05`/`0x0A`/
+`0x0B` are confirmed against this keyboard's real 27 bytes. `0x0C` and `0x0D`
+are read only from the encoder's IL and have never been seen in a real macro —
+tested here from hand-built bytes, not device data, and the test docstrings say
+so.
+
+An earlier draft of this section guessed the bytes were length-prefixed records
 (27 = 4+5+4+5+4+5, each group's first byte equal to its own length); that was
 arithmetic on a coincidence, not a decode, and it is wrong. `docs/investigations
 /macros.md` keeps the wrong guess on the record next to the correction.

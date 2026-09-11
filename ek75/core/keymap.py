@@ -19,6 +19,7 @@ owner could find; the keyboard knows it, and so does this file.
 Labels are (english, portuguese) pairs so the GUI can show either without a
 second table to keep in sync.
 """
+from . import protocol
 
 # --- FUNCTION_INDEX (device.js) — only the ids this keyboard actually emits ---
 # The vendor's index runs to at least 57 and covers mice as well as keyboards;
@@ -104,6 +105,18 @@ HID_MODIFIERS = (
     (0x40, ("Right Alt", "Alt direito")),
     (0x80, ("Right Win", "Win direito")),
 )
+
+# --- USB HID Keyboard-page modifier USAGES (0xE0-0xE7) -----------------------
+# A different axis from HID_MODIFIERS above, not a rename of it. HID_MODIFIERS
+# is a bitmask for CombineKey's data[0]; a recorded macro instead spells a
+# modifier out as its own ordinary-looking usage code, exactly like any other
+# key — confirmed against this keyboard's own stored macro, which presses
+# usage 0xE0 (Left Ctrl) three times. Two encodings for the same physical key,
+# in two corners of one protocol; reusing HID_MODIFIERS here would silently
+# fail to resolve the one modifier real device data actually contains.
+HID_MODIFIER_USAGES = {usage: names for usage, names in
+                       zip(range(0xE0, 0xE8),
+                           (n for _bit, n in HID_MODIFIERS))}
 
 # --- USB HID Consumer page (0x0C) — the media keys on the F-row --------------
 CONSUMER_KEYS = {
@@ -211,6 +224,55 @@ def locked_keys(key_map):
         if value["function_id"] in (10, 44):
             locked.add(key_id)
     return locked
+
+
+def describe_macro_usage(usage):
+    """A HID usage byte from a MACRO step, as an (english, portuguese) name.
+
+    Not the same lookup `describe()` does for CombineKey: a macro's modifiers
+    are their own usages (0xE0-0xE7), while CombineKey packs them into a
+    bitmask instead. Checking HID_MODIFIER_USAGES first is what tells the two
+    apart; falling through to HID_KEYS covers every ordinary key a macro can
+    record. None means a usage neither table names.
+    """
+    return HID_MODIFIER_USAGES.get(usage) or HID_KEYS.get(usage)
+
+
+def format_macro_steps(data):
+    """A macro's recorded bytes as human-readable lines, in (english, portuguese).
+
+    The one entry point both `cli.py` and `gui/pages/macros.py` call: what a
+    step reads like, and what an unparseable byte reads like, live here and
+    nowhere else — not duplicated per front end. Returns a list of (english,
+    portuguese) line pairs. Never raises, and an unparseable byte becomes a
+    prose line ("cut off", "unknown opcode") rather than a fall back to raw
+    hex — there is no hex fallback in this function; the caller decides
+    whether it wants one on top.
+    """
+    steps = protocol.parse_macro_steps(data)
+    lines = []
+    for step in steps:
+        op = step["op"]
+        if op in ("keydown", "keyup"):
+            named = describe_macro_usage(step["usage"])
+            label = (named[0] if named else f"usage 0x{step['usage']:02X}",
+                     named[1] if named else f"usage 0x{step['usage']:02X}")
+            verb = ("Key down", "Tecla pressionada") if op == "keydown" \
+                else ("Key up", "Tecla solta")
+            lines.append((f"{verb[0]}: {label[0]}", f"{verb[1]}: {label[1]}"))
+        elif op == "delay":
+            lines.append((f"Wait {step['ms']} ms", f"Espera {step['ms']} ms"))
+        elif op == "random_delay":
+            lines.append((
+                f"Wait {step['min_ms']}-{step['max_ms']} ms (random)",
+                f"Espera {step['min_ms']}-{step['max_ms']} ms (aleatório)"))
+        elif op == "unknown":
+            lines.append((f"Unknown opcode 0x{step['opcode']:02X}",
+                          f"Opcode desconhecido 0x{step['opcode']:02X}"))
+        else:                                          # "truncated"
+            lines.append(("(cut off — fewer bytes than the step needs)",
+                          "(cortado — faltam bytes para o passo)"))
+    return lines
 
 
 def is_bare_modifier(function_id, data):

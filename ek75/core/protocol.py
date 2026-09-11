@@ -955,3 +955,79 @@ def build_get_macro_data_probe(macro_id, profile_id=0):
     """
     return build_multipacket_probe(profile_id, CLASS_MACRO, MCO_CMD_MEMORY,
                                    args=bytes([_byte("macro_id", macro_id)]))
+
+
+# --- macro step decoding — read-only, decodes bytes this project already reads
+# Recovered from the Windows app's recording page,
+# `OEMDriver.Pages.PageMacroTg::ParseKeyboardData`, not from either vendor
+# protocol source: the web driver passes macro data through untouched, and the
+# code that builds it lives in the app's UI layer. See PROTOCOL.md's
+# `CLASS_MACRO` section for the byte layout and how each opcode's confidence
+# differs — 0x04/0x05/0x0A/0x0B are confirmed against this keyboard's own
+# stored macro; 0x0C/0x0D are read from the encoder's IL and have never been
+# seen in real device data.
+MACRO_OP_KEYDOWN = 0x04
+MACRO_OP_KEYUP = 0x05
+MACRO_OP_DELAY_8 = 0x0A
+MACRO_OP_DELAY_16 = 0x0B
+MACRO_OP_DELAY_24 = 0x0C
+MACRO_OP_DELAY_RANDOM = 0x0D
+
+
+def parse_macro_steps(data):
+    """Decode a macro's recorded bytes into a list of step dicts.
+
+    This decodes data READ from a device, not the output of this project's own
+    encoder — none exists yet. Garbage must never become an exception: it
+    becomes a `{"op": "truncated"}` or `{"op": "unknown", ...}` entry, so a
+    caller can show what parsed and say plainly where it stopped, rather than
+    the whole macro vanishing behind a traceback.
+    """
+    steps = []
+    i = 0
+    while i < len(data):
+        op = data[i]
+        if op in (MACRO_OP_KEYDOWN, MACRO_OP_KEYUP):
+            if i + 1 >= len(data):
+                steps.append({"op": "truncated"})
+                break
+            steps.append({"op": "keydown" if op == MACRO_OP_KEYDOWN else "keyup",
+                          "usage": data[i + 1]})
+            i += 2
+        elif op == MACRO_OP_DELAY_8:
+            if i + 1 >= len(data):
+                steps.append({"op": "truncated"})
+                break
+            steps.append({"op": "delay", "ms": data[i + 1]})
+            i += 2
+        elif op == MACRO_OP_DELAY_16:
+            if i + 2 >= len(data):
+                steps.append({"op": "truncated"})
+                break
+            steps.append({"op": "delay",
+                          "ms": (data[i + 1] << 8) | data[i + 2]})
+            i += 3
+        elif op == MACRO_OP_DELAY_24:
+            if i + 3 >= len(data):
+                steps.append({"op": "truncated"})
+                break
+            steps.append({"op": "delay", "ms": (data[i + 1] << 16)
+                          | (data[i + 2] << 8) | data[i + 3]})
+            i += 4
+        elif op == MACRO_OP_DELAY_RANDOM:
+            if i + 4 >= len(data):
+                steps.append({"op": "truncated"})
+                break
+            # Not validated against min <= max: the vendor's own encoder does
+            # not check this either (read from its IL), so inventing a check
+            # here would reject something the real firmware may accept.
+            steps.append({
+                "op": "random_delay",
+                "min_ms": (data[i + 1] << 8) | data[i + 2],
+                "max_ms": (data[i + 3] << 8) | data[i + 4],
+            })
+            i += 5
+        else:
+            steps.append({"op": "unknown", "opcode": op})
+            i += 1
+    return steps
