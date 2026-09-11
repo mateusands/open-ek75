@@ -1642,6 +1642,18 @@ are read only from the encoder's IL and have never been seen in a real macro —
 tested here from hand-built bytes, not device data, and the test docstrings say
 so.
 
+`protocol.build_macro_steps` is the inverse, pure logic with no I/O and
+nothing sent to a keyboard. Its strongest oracle is this keyboard's own
+27-byte macro: decoding then re-encoding it reproduces those exact bytes,
+touching opcodes `0x04`/`0x05`/`0x0A`/`0x0B` — the same four this project has
+ever seen in real device data. `0x0C` and `0x0D` are checked by a second,
+weaker test: encoding a hand-written step list and decoding the result
+reproduces the same list. That is internal consistency between this project's
+own encoder and decoder, not confirmation against the vendor's format — no
+real macro has ever exercised either opcode, a limit already on record above.
+It also picks the smallest delay opcode that fits (1/2/3 bytes), matching what
+`ParseKeyboardData` itself does rather than always emitting the largest form.
+
 An earlier draft of this section guessed the bytes were length-prefixed records
 (27 = 4+5+4+5+4+5, each group's first byte equal to its own length); that was
 arithmetic on a coincidence, not a decode, and it is wrong. `docs/investigations

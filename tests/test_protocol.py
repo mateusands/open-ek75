@@ -1701,6 +1701,95 @@ def test_decode_this_keyboards_real_macro():
     ]
 
 
+def test_build_macro_steps_round_trips_this_keyboards_real_macro():
+    """The encoder, decoded and re-encoded, must reproduce this keyboard's own
+    27 bytes exactly. This is the strongest oracle available for an encoder
+    with nothing on the wire yet: the real bytes were transcribed once from
+    the device, independent of both directions of this test, so a match is
+    not circular. It exercises 0x04/0x05/0x0A/0x0B — every opcode this project
+    has ever seen in a real macro.
+    """
+    from ek75.core import protocol
+    real = bytes.fromhex(
+        "04e00a8005e00b095e04e00a6d05e00b079d04e00a5f05e00b0471")
+
+    steps = protocol.parse_macro_steps(real)
+    assert protocol.build_macro_steps(steps) == real
+
+    # And the other direction, WEAKER: encoding a hand-written step list and
+    # decoding it back must reproduce the same list. This only checks that
+    # this project's own encoder and decoder agree with EACH OTHER for 0x0C
+    # and the random-delay opcode 0x0D — neither has ever appeared in a real
+    # macro, so this is internal consistency, not vendor confirmation.
+    hand_written = [
+        {"op": "keydown", "usage": 0x04},           # A
+        {"op": "delay", "ms": 50},
+        {"op": "keyup", "usage": 0x04},
+        {"op": "delay", "ms": 70000},                # forces the 3-byte opcode
+        {"op": "random_delay", "min_ms": 100, "max_ms": 200},
+    ]
+    encoded = protocol.build_macro_steps(hand_written)
+    assert protocol.parse_macro_steps(encoded) == hand_written
+
+
+def test_build_macro_steps_picks_the_smallest_delay_opcode():
+    """The vendor's own encoder picks 1-, 2- or 3-byte delay opcodes by size —
+    read from `ParseKeyboardData`'s own bounds, 255 / 65535 / 16777215. Picking
+    the smallest opcode that fits is what that logic does; always using the
+    3-byte form would still decode correctly but would not match what a real
+    macro looks like, and a byte-match test on a fixed constant is how that
+    would be caught.
+    """
+    from ek75.core import protocol
+
+    assert protocol.build_macro_steps([{"op": "delay", "ms": 255}]) == \
+        bytes.fromhex("0aff")
+    assert protocol.build_macro_steps([{"op": "delay", "ms": 256}]) == \
+        bytes.fromhex("0b0100")
+    assert protocol.build_macro_steps([{"op": "delay", "ms": 65535}]) == \
+        bytes.fromhex("0bffff")
+    assert protocol.build_macro_steps([{"op": "delay", "ms": 65536}]) == \
+        bytes.fromhex("0c010000")
+
+
+def test_build_macro_steps_refuses_what_it_cannot_encode():
+    """This builder can send bytes to a keyboard; unlike the decoder, it does
+    not get to shrug at bad input — golden rule 2 applies here as much as to
+    any other builder in this file.
+    """
+    from ek75.core import protocol
+
+    def rejects(steps):
+        try:
+            protocol.build_macro_steps(steps)
+        except ValueError:
+            return True
+        return False
+
+    assert rejects([{"op": "delay", "ms": -1}])
+    assert rejects([{"op": "delay", "ms": 16777216}])           # past 3 bytes
+    assert rejects([{"op": "keydown", "usage": 256}])
+    assert rejects([{"op": "keydown", "usage": -1}])
+    assert rejects([{"op": "random_delay", "min_ms": 0, "max_ms": 65536}])
+    # An inverted range: the decoder (reading device data) accepts one without
+    # complaint — nobody has observed what the firmware does with one — but
+    # this builder can put bytes on a keyboard and nobody has a legitimate
+    # reason to construct a backwards range on purpose.
+    assert rejects([{"op": "random_delay", "min_ms": 200, "max_ms": 100}])
+    assert rejects([{"op": "bogus"}])
+
+    # A malformed dict — the right op, a missing field — is the same class of
+    # bad input as an out-of-range value and must raise the same ValueError,
+    # not a bare KeyError from indexing straight into the dict.
+    for missing_field in ({"op": "delay"}, {"op": "keydown"},
+                          {"op": "random_delay", "min_ms": 1}):
+        try:
+            protocol.build_macro_steps([missing_field])
+        except ValueError:
+            continue
+        raise AssertionError(f"{missing_field} should have raised ValueError")
+
+
 def test_macro_opcodes_never_seen_in_real_data():
     """`0x0C` and `0x0D` exist in the vendor's encoder and in no macro this
     project has ever read. Hand-built rather than device-derived — the

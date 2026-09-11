@@ -1031,3 +1031,79 @@ def parse_macro_steps(data):
             steps.append({"op": "unknown", "opcode": op})
             i += 1
     return steps
+
+
+def build_macro_steps(steps):
+    """The inverse of `parse_macro_steps`: a list of step dicts back to bytes.
+
+    Unlike the decoder, this builder DOES raise on bad input — it can put
+    bytes on a keyboard, so golden rule 2 applies: nothing reaches the wire
+    that has not been validated.
+
+    The delay opcode is the smallest one that fits, matching
+    `ParseKeyboardData`'s own bounds (255 / 65535 / 16777215) — not always the
+    3-byte form, which would decode correctly but would not match what the
+    vendor's own recorder produces.
+    """
+    def field(step, name):
+        # A missing key is the same class of bad input as an out-of-range
+        # value — a malformed step dict — and must raise the same ValueError
+        # every other rejection here does, not a KeyError from indexing.
+        if name not in step:
+            raise ValueError(f"macro step {step.get('op')!r} needs {name!r}")
+        return step[name]
+
+    out = bytearray()
+    for step in steps:
+        op = step.get("op")
+        if op in ("keydown", "keyup"):
+            usage = _byte("usage", field(step, "usage"))
+            out.append(MACRO_OP_KEYDOWN if op == "keydown" else MACRO_OP_KEYUP)
+            out.append(usage)
+        elif op == "delay":
+            ms = field(step, "ms")
+            # The range check comes BEFORE picking a size, not folded into the
+            # size branches: `ms <= 0xFFFF` is true for -1 too, so a negative
+            # value would otherwise fall into the 2-byte branch and silently
+            # encode as 0xFFFF instead of being refused.
+            if not isinstance(ms, int) or isinstance(ms, bool) \
+               or not 0 <= ms <= 0xFFFFFF:
+                raise ValueError(f"delay ms must be 0..16777215, got {ms!r}")
+            if ms <= 0xFF:
+                out.append(MACRO_OP_DELAY_8)
+                out.append(ms)
+            elif ms <= 0xFFFF:
+                out.append(MACRO_OP_DELAY_16)
+                out.append((ms >> 8) & 0xFF)
+                out.append(ms & 0xFF)
+            else:
+                out.append(MACRO_OP_DELAY_24)
+                out.append((ms >> 16) & 0xFF)
+                out.append((ms >> 8) & 0xFF)
+                out.append(ms & 0xFF)
+        elif op == "random_delay":
+            min_ms = field(step, "min_ms")
+            max_ms = field(step, "max_ms")
+            for name, value in (("min_ms", min_ms), ("max_ms", max_ms)):
+                if not isinstance(value, int) or isinstance(value, bool) \
+                   or not 0 <= value <= 0xFFFF:
+                    raise ValueError(f"{name} must be 0..65535, got {value!r}")
+            if min_ms > max_ms:
+                # The decoder (which reads DEVICE data) accepts an inverted
+                # range without complaint, because nobody has ever observed
+                # what the firmware does with one and a decoder must never
+                # raise on data it did not choose. This builder is different:
+                # it can put bytes on a keyboard, nobody has a legitimate
+                # reason to construct a backwards range, and rejecting it
+                # costs nothing.
+                raise ValueError(
+                    f"random_delay min_ms ({min_ms}) must not exceed "
+                    f"max_ms ({max_ms})")
+            out.append(MACRO_OP_DELAY_RANDOM)
+            out.append((min_ms >> 8) & 0xFF)
+            out.append(min_ms & 0xFF)
+            out.append((max_ms >> 8) & 0xFF)
+            out.append(max_ms & 0xFF)
+        else:
+            raise ValueError(f"unknown macro step op: {op!r}")
+    return bytes(out)
