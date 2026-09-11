@@ -26,6 +26,12 @@ from .. import i18n, theme
 from ..keyboard_view import KeyboardView
 from ..widgets import Card, ScrollFrame, SegmentedButtons
 
+# The four left-hand modifiers, named without their side: this row cannot offer
+# the right-hand ones, so "Left" would be the same word on every box. Language
+# independent on purpose — Ctrl, Shift, Alt and Win are these keys' legends on
+# the physical keyboard in both languages this app speaks.
+MODIFIER_LABELS = {0x01: "Ctrl", 0x02: "Shift", 0x04: "Alt", 0x08: "Win"}
+
 SOURCE_KEY = "key"
 SOURCE_MEDIA = "media"
 SOURCE_COPY = "copy"
@@ -60,6 +66,12 @@ class KeysPage(ttk.Frame):
 
         self._view = KeyboardView(left, self.profile, on_key_click=self._on_key_click)
         self._view.pack(fill="both", expand=True)
+        # Opts the view into hover: a pointer cursor, an outline under the
+        # cursor, and a tip saying what the key does. On this page the keys ARE
+        # controls, and a control with a click handler and no feedback is the
+        # defect the design review names. The lighting page does not call this —
+        # there the same view is a preview and its keys are not clickable.
+        self._view.set_hover_text(self._hover_text)
         # A flat, unlit look: this page is about assignments, not about light.
         self._view.set_preview(1, [(60, 66, 74)], brightness=255)
         self._view.set_preview(1, [(48, 52, 58)], brightness=255, side=True)
@@ -104,7 +116,14 @@ class KeysPage(ttk.Frame):
             if bit > 0x08:               # the left-hand four; "Ctrl+C" means left
                 continue
             var = tk.IntVar(value=0)
-            short = names[0 if i18n.LANG == "en" else 1].split()[-1]
+            # NOT `names[...].split()[-1]`. That takes the last word, which is
+            # right in English ("Left Ctrl" -> "Ctrl") and wrong in every
+            # language that puts the side second: "Ctrl esquerdo",
+            # "Shift esquerdo", "Alt esquerdo" and "Win esquerdo" all became
+            # "esquerdo", four identical checkboxes 340px wide in a 302px row.
+            # The row only ever offers the left-hand modifiers, so the side is
+            # noise in any language and the bare name is what belongs here.
+            short = MODIFIER_LABELS[bit]
             tk.Checkbutton(self._modifier_row, text=short, variable=var,
                            command=self._on_modifier, bg=theme.BG_PANEL,
                            fg=theme.FG, selectcolor=theme.BG_SUNKEN,
@@ -114,28 +133,34 @@ class KeysPage(ttk.Frame):
             self._modifier_vars[bit] = var
         self._modifier_row.pack(anchor="w", pady=(0, 8))
 
-        self._list_holder = ttk.Frame(card.body, style="Panel.TFrame", height=230)
-        self._list_holder.pack(fill="both", expand=True)
-        self._list_holder.pack_propagate(False)
-        self._list = None
+        # Everything with a fixed height is packed to the BOTTOM first, so the
+        # list gets what is left over instead of claiming it all. Packed the
+        # other way round — which is how this page shipped — `_list_holder`'s
+        # height=230 plus expand=True ate the cavity and Tk silently declined to
+        # map the note below it: at the default 1120x680 the Fn+Esc safety text
+        # was simply not drawn, and at the 940x600 minimum the Apply button fell
+        # outside the content area. Same lesson `ScrollFrame` already carries.
+        self._note = ttk.Label(card.body, text="", style="PanelMuted.TLabel",
+                                justify="left", wraplength=300)
+        self._note.pack(side="bottom", anchor="w", pady=(10, 0))
+
+        buttons = ttk.Frame(card.body, style="Panel.TFrame")
+        buttons.pack(side="bottom", anchor="w")
 
         self._chosen = ttk.Label(card.body, text=i18n.t("keys_pick_target"),
                                   style="PanelMuted.TLabel", justify="left",
                                   wraplength=300)
-        self._chosen.pack(anchor="w", pady=(8, 6))
+        self._chosen.pack(side="bottom", anchor="w", pady=(8, 6))
 
-        buttons = ttk.Frame(card.body, style="Panel.TFrame")
-        buttons.pack(anchor="w")
+        self._list_holder = ttk.Frame(card.body, style="Panel.TFrame")
+        self._list_holder.pack(fill="both", expand=True)
+        self._list = None
         self._apply_button = ttk.Button(buttons, text=i18n.t("keys_apply"),
                                          command=self._on_apply, state="disabled")
         self._apply_button.pack(side="left", padx=(0, 8))
         self._revert_button = ttk.Button(buttons, text=i18n.t("keys_revert"),
                                           command=self._on_revert, state="disabled")
         self._revert_button.pack(side="left")
-
-        self._note = ttk.Label(card.body, text="", style="PanelMuted.TLabel",
-                                justify="left", wraplength=300)
-        self._note.pack(anchor="w", pady=(10, 0))
 
     # --- data ----------------------------------------------------------------
 
@@ -172,6 +197,21 @@ class KeysPage(ttk.Frame):
         self._view.select(key.id)
         self._show_summary()
         self._update_buttons()
+
+    def _hover_text(self, key):
+        """One line for the tip: the key, then what each layer does.
+
+        Reads the same live map the panel does, so the tip cannot disagree with
+        the selection summary. Before the map arrives it says so rather than
+        showing the vendor profile's answer, which is wrong here 23 times.
+        """
+        if self._key_map is None:
+            return f"{key.label}  ·  {i18n.t('fn_reading')}"
+        locked = "  ·  🔒" if key.id in self._locked else ""
+        base = self._describe(self._key_map.get((key.id, protocol.LAYER_BASE)))
+        fn = self._describe(self._key_map.get((key.id, protocol.LAYER_FN)))
+        return (f"{key.label}   (KeyID {key.id}){locked}\n"
+                f"{i18n.t('keys_base')}: {base}\n{i18n.t('keys_fn')}: {fn}")
 
     def _describe(self, assignment):
         if assignment is None:

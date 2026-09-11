@@ -54,6 +54,11 @@ class KeyboardView(tk.Canvas):
 
         self._key_items = {}        # KeyID -> (polygon id, text id)
         self._selected_id = None    # outlined by select(), survives _paint
+        self._describe_hover = None # set by set_hover_text() to opt in
+        self._hover_bound = False
+        self._hover_id = None
+        self._tip = None
+        self._key_by_id = {k.id: k for k in profile.keys}
         self._side_items = []
         # Replaced with the real count once LED_CMD_ATTRIBUTE answers: on this
         # keyboard the side light reports a 1x16 matrix, so drawing 16 segments
@@ -95,6 +100,65 @@ class KeyboardView(tk.Canvas):
         self._ensure_animating()
         self._paint()
 
+    def set_hover_text(self, describe):
+        """Turn on hover: `describe(key)` returns a line, or None for no tip.
+
+        Off by default. The lighting page uses this view as a *preview* and its
+        keys are not controls there; only a page that made them clickable should
+        make them feel clickable. Calling this is what opts in.
+        """
+        self._describe_hover = describe
+        self.configure(cursor="hand2" if describe else "")
+        if describe and not self._hover_bound:
+            self._hover_bound = True
+            self.bind("<Motion>", self._on_motion, add="+")
+            self.bind("<Leave>", lambda _e: self._clear_hover(), add="+")
+
+    def _key_at(self, x, y):
+        for item in self.find_overlapping(x, y, x, y):
+            for key_id, (poly, _label) in self._key_items.items():
+                if item == poly:
+                    return key_id
+        return None
+
+    def _on_motion(self, event):
+        key_id = self._key_at(event.x, event.y)
+        if key_id == self._hover_id:
+            return                          # same key: do not redraw per pixel
+        self._clear_hover()
+        self._hover_id = key_id
+        if key_id is None:
+            return
+        # The outline again, like select() — `_paint` owns the fill and would
+        # wipe a hover painted there within one animation tick.
+        if key_id != self._selected_id:
+            self.itemconfigure(self._key_items[key_id][0],
+                               outline=theme.FG_MUTED, width=2)
+        key = self._key_by_id.get(key_id)
+        text = self._describe_hover(key) if key is not None else None
+        if text:
+            self._show_tip(event.x_root + 14, event.y_root + 18, text)
+
+    def _clear_hover(self):
+        if self._hover_id is not None and self._hover_id != self._selected_id:
+            item = self._key_items.get(self._hover_id)
+            if item is not None:
+                self.itemconfigure(item[0], outline=theme.BORDER, width=1)
+        self._hover_id = None
+        if self._tip is not None:
+            self._tip.destroy()
+            self._tip = None
+
+    def _show_tip(self, x, y, text):
+        self._tip = tip = tk.Toplevel(self)
+        tip.wm_overrideredirect(True)
+        tip.wm_geometry(f"+{x}+{y}")
+        tk.Label(tip, text=text, bg=theme.BG_RAISED, fg=theme.FG,
+                 font=theme.FONT_SMALL, justify="left",
+                 padx=8, pady=5, bd=0,
+                 highlightbackground=theme.BORDER,
+                 highlightthickness=1).pack()
+
     def select(self, key_id):
         """Outline one key, or none when `key_id` is None.
 
@@ -119,6 +183,7 @@ class KeyboardView(tk.Canvas):
             self._redraw()
 
     def stop(self):
+        self._clear_hover()
         """Cancel the animation — call before the window is destroyed."""
         if self._after_id is not None:
             try:
