@@ -61,6 +61,11 @@ def side_light_color(index):
 # first and last LED in a packet, and the colours that follow are in this order.
 # Without it, per-key colour has no way to say which key it means.
 #
+# Independently re-extracted from the DLL a second time, by a separate pass that
+# had not seen this table, and compared element by element: identical. That is a
+# different kind of check from the one below — it catches a transcription slip,
+# where the `0101.json` comparison catches a misread of the format itself.
+#
 # Transcribed like the colour tables above, and checked against `0101.json` —
 # which is public data this project already ships — by
 # `test_the_led_matrix_matches_the_public_key_list`: every id in it exists
