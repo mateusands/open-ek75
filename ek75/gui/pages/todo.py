@@ -77,10 +77,5 @@ class TodoPage(ttk.Frame):
         super().destroy()
 
 
-def keys_page(master, app):
-    return TodoPage(master, app, i18n.t("nav_keys"), i18n.t("keys_todo"),
-                    show_keyboard=True)
-
-
 def macros_page(master, app):
     return TodoPage(master, app, i18n.t("nav_macros"), i18n.t("macros_todo"))

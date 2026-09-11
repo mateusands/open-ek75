@@ -53,6 +53,7 @@ class KeyboardView(tk.Canvas):
         self.on_key_click = on_key_click
 
         self._key_items = {}        # KeyID -> (polygon id, text id)
+        self._selected_id = None    # outlined by select(), survives _paint
         self._side_items = []
         # Replaced with the real count once LED_CMD_ATTRIBUTE answers: on this
         # keyboard the side light reports a 1x16 matrix, so drawing 16 segments
@@ -94,6 +95,22 @@ class KeyboardView(tk.Canvas):
         self._ensure_animating()
         self._paint()
 
+    def select(self, key_id):
+        """Outline one key, or none when `key_id` is None.
+
+        Uses the polygon's `outline`, which `_paint` never touches — it sets
+        `fill` on the polygon and the label, every animation tick. A selection
+        drawn as a fill would be repainted away within 30 ms.
+        """
+        if self._selected_id == key_id:
+            return
+        self._selected_id = key_id
+        for kid, item in self._key_items.items():
+            chosen = kid == key_id
+            self.itemconfigure(item[0],
+                               outline=theme.ACCENT if chosen else theme.BORDER,
+                               width=2 if chosen else 1)
+
     def set_side_segments(self, count):
         """How many LEDs the side light strip actually has (its matrix width)."""
         count = max(1, int(count))
@@ -126,6 +143,7 @@ class KeyboardView(tk.Canvas):
 
     def _redraw(self):
         self.delete("all")
+        selected, self._selected_id = self._selected_id, None
         self._key_items.clear()
         self._side_items.clear()
         metrics = self._layout_metrics()
@@ -151,6 +169,9 @@ class KeyboardView(tk.Canvas):
 
         if knob_keys:
             self._draw_knob(knob_keys, scale, ox, oy)
+
+        if selected is not None:                 # the polygons are new objects
+            self.select(selected)                # so the outline has to be redrawn
 
         # The side light bar: the profile has no geometry for it (it is a
         # physical strip, not a key), so it is drawn as a strip the width of

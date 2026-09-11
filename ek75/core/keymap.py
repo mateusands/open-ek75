@@ -160,6 +160,59 @@ def describe(function_id, data):
     return FUNCTION_NAMES.get(function_id)
 
 
+# --- what a remapping UI is allowed to do -----------------------------------
+# `SetKeyAssign` will write any of the vendor's 57 function ids, and most of
+# them have undocumented data bytes. Two of the ids are built directly by the
+# picker (6, a keyboard usage; 8, a media usage) from public HID tables, and
+# both shapes were confirmed on hardware. Everything else can only be reached by
+# *copying* an assignment this keyboard already reported — which keeps the bytes
+# validated, and says nothing at all about whether the result is sane.
+#
+# Hence an allowlist. On it: things whose worst case is a lost setting. Off it:
+# 44 factory reset (one stray keystroke wipes the keyboard), 10 the Fn modifier,
+# 41/42 pairing (drops the connection this is configured over), 39/40 the knob
+# (meaningless on a key that cannot rotate), 1/32 mouse emulation (the vendor
+# profile advertises it; this unit does not have it).
+COPYABLE_FUNCTIONS = frozenset({
+    45,     # Windows / Mac layout
+    46,     # Show battery level
+    47,     # Lock the Windows key
+    48,     # Lighting speed
+    49,     # Lighting direction
+    53,     # Cycle lighting effect
+    54,     # Cycle brightness
+    55,     # Cycle lighting colour
+})
+
+
+def is_copyable(function_id):
+    """True when one key's assignment may be copied onto another key."""
+    return function_id in COPYABLE_FUNCTIONS
+
+
+def locked_keys(key_map):
+    """Key ids a remapping UI must refuse to write, found in the map itself.
+
+    The escape hatch from a bad key write is `Fn`+`Esc`, the factory reset this
+    firmware binds. It takes **two** keys, so locking only the `Fn` key leaves
+    the hatch just as breakable from the other end.
+
+    Both are identified by what the keyboard reports rather than by id: the key
+    carrying the `Fn` modifier (function id 10), and the key carrying
+    `Factory reset` (44) on either layer. A sibling model that puts them
+    somewhere else is then protected too, and a model that reports neither
+    returns an empty set — which is the honest answer, and the caller's problem
+    to state rather than this function's to paper over with a guessed id.
+    """
+    locked = set()
+    for (key_id, _layer), value in key_map.items():
+        if value is None:
+            continue
+        if value["function_id"] in (10, 44):
+            locked.add(key_id)
+    return locked
+
+
 def is_bare_modifier(function_id, data):
     """True when an assignment is only modifiers — `Fn`+`Shift` is still Shift.
 

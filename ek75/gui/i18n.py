@@ -32,7 +32,6 @@ STRINGS = {
         "todo_connection": "Wired/wireless connection toggle",
         "todo_profiles": "Profile selector",
         "todo_sleep": "Sleep timer — changing it",
-        "todo_battery": "Battery level",
         "nav_home": "Device",
         "nav_keys": "Keys",
         "nav_lighting": "Lighting",
@@ -76,6 +75,39 @@ STRINGS = {
         "backup_saved": "Backed up to {path}",
         "backup_failed": "Backup failed: {error}",
         "restored": "Restored from {path}",
+        "keys_blurb": ("What each key does, read from the keyboard itself — the "
+                        "vendor's\nprofile disagrees with this hardware on 23 "
+                        "assignments. Click a key to\nsee it, then assign it "
+                        "something else."),
+        "keys_assign": "Assign",
+        "keys_layer": "Layer",
+        "keys_source": "Assign to",
+        "keys_source_key": "A key",
+        "keys_source_media": "Media",
+        "keys_source_copy": "Copy",
+        "keys_pick_target": "Pick what this key should do.",
+        "keys_chosen": "Chosen: {name}",
+        "keys_apply": "Apply",
+        "keys_revert": "Revert to backup",
+        "keys_working": "Writing…",
+        "keys_writing": "Writing the assignment and reading it back…",
+        "keys_written": "The keyboard now reports: {name}",
+        "keys_refused": "The keyboard did not acknowledge the write — nothing changed.",
+        "keys_locked": ("This key cannot be remapped: it is half of Fn+Esc, the "
+                         "factory reset built into the firmware. That is the way "
+                         "back from a bad key write, and it must keep working."),
+        "keys_need_backup": ("No key map has been backed up yet. Take a backup "
+                              "from the Device page first — nothing here writes "
+                              "without a way back."),
+        "keys_no_hatch": ("Warning: this keyboard did not report an Fn modifier "
+                           "or a factory reset, so the Fn+Esc way back was not "
+                           "found on it. Keep your backup."),
+        "keys_hatch": ("The way back: Revert uses your backup. Under that, "
+                        "Fn+Esc is a factory reset built into the firmware — it "
+                        "needs nothing from this software."),
+        "keys_no_targets": ("Nothing to copy: this keyboard reports no "
+                             "assignment from the vetted list. Resets, pairing "
+                             "and the knob are deliberately not copyable."),
         "backup_unreadable": "{name} is not a backup this can read ({detail}).",
         "restoring": "Restoring the lighting…",
         "restoring_keys": "Restoring the lighting and the key map — the key map "
@@ -111,14 +143,6 @@ STRINGS = {
             "The keyboard's HID node is root-only on this system.\n\n"
             "Install the udev rule once, then replug the keyboard:\n"
             "    sudo sh packaging/install.sh"
-        ),
-        "keys_todo": (
-            "Key remapping needs CLASS_KEY, which is not ported yet.\n\n"
-            "The vendor driver's GetKeyAssign/SetKeyAssign are identified in\n"
-            "docs/vendor-reference/tgdevice.js and the 83-key layout below is\n"
-            "already read from Dareu's own device profile — what is missing is\n"
-            "the packet builders and a byte-match test for each, then one\n"
-            "confirmation on real hardware."
         ),
         "macros_todo": (
             "Macros need CLASS_MACRO, which is not ported yet.\n\n"
@@ -187,7 +211,6 @@ STRINGS = {
         "todo_connection": "Alternar conexão com fio / sem fio",
         "todo_profiles": "Seletor de perfis",
         "todo_sleep": "Tempo de espera — alterar",
-        "todo_battery": "Nível de bateria",
         "nav_home": "Dispositivo",
         "nav_keys": "Teclas",
         "nav_lighting": "Iluminação",
@@ -231,6 +254,40 @@ STRINGS = {
         "backup_saved": "Backup salvo em {path}",
         "backup_failed": "Falha no backup: {error}",
         "restored": "Restaurado de {path}",
+        "keys_blurb": ("O que cada tecla faz, lido do próprio teclado — o perfil "
+                        "do\nfabricante discorda deste hardware em 23 atribuições. "
+                        "Clique numa tecla\npara ver, e então atribua outra coisa "
+                        "a ela."),
+        "keys_assign": "Atribuir",
+        "keys_layer": "Camada",
+        "keys_source": "Atribuir a",
+        "keys_source_key": "Uma tecla",
+        "keys_source_media": "Mídia",
+        "keys_source_copy": "Copiar",
+        "keys_pick_target": "Escolha o que esta tecla deve fazer.",
+        "keys_chosen": "Escolhido: {name}",
+        "keys_apply": "Aplicar",
+        "keys_revert": "Voltar ao backup",
+        "keys_working": "Gravando…",
+        "keys_writing": "Gravando a atribuição e lendo de volta…",
+        "keys_written": "O teclado agora reporta: {name}",
+        "keys_refused": "O teclado não confirmou a escrita — nada mudou.",
+        "keys_locked": ("Esta tecla não pode ser remapeada: ela é metade do "
+                         "Fn+Esc, o reset de fábrica embutido no firmware. Esse é "
+                         "o caminho de volta de uma escrita ruim, e precisa "
+                         "continuar funcionando."),
+        "keys_need_backup": ("Nenhum mapa de teclas foi salvo ainda. Faça um "
+                              "backup na página Dispositivo primeiro — nada aqui "
+                              "escreve sem caminho de volta."),
+        "keys_no_hatch": ("Atenção: este teclado não reportou um modificador Fn "
+                           "nem um reset de fábrica, então o caminho de volta "
+                           "Fn+Esc não foi encontrado nele. Guarde seu backup."),
+        "keys_hatch": ("O caminho de volta: Voltar ao backup usa o seu arquivo. "
+                        "Abaixo disso, Fn+Esc é um reset de fábrica embutido no "
+                        "firmware — não depende deste software."),
+        "keys_no_targets": ("Nada para copiar: este teclado não reporta nenhuma "
+                             "atribuição da lista permitida. Resets, pareamento "
+                             "e o knob não são copiáveis de propósito."),
         "backup_unreadable": "{name} não é um backup que dê para ler ({detail}).",
         "restoring": "Restaurando a iluminação…",
         "restoring_keys": "Restaurando a iluminação e o mapa de teclas — são 166 "
@@ -266,14 +323,6 @@ STRINGS = {
             "O nó HID do teclado é acessível só por root neste sistema.\n\n"
             "Instale a regra udev uma vez e replugue o teclado:\n"
             "    sudo sh packaging/install.sh"
-        ),
-        "keys_todo": (
-            "Remapear teclas depende de CLASS_KEY, ainda não portada.\n\n"
-            "Os métodos GetKeyAssign/SetKeyAssign do driver do fabricante estão\n"
-            "identificados em docs/vendor-reference/tgdevice.js, e o layout de\n"
-            "83 teclas abaixo já vem do perfil de dispositivo da própria Dareu.\n"
-            "Falta escrever os construtores de pacote, um teste byte-match para\n"
-            "cada um e confirmar uma vez no hardware real."
         ),
         "macros_todo": (
             "Macros dependem de CLASS_MACRO, ainda não portada.\n\n"

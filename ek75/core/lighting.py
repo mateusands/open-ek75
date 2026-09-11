@@ -214,6 +214,34 @@ class Session:
         """
         device.settle()
 
+    def assign_key(self, key_id, layer, function_id, data,
+                   profile_id=protocol.DEFAULT_PROFILE_ID):
+        """Assign one key and return **what the keyboard then reports**.
+
+        Not what was asked for. The two can differ, and only the read is true —
+        `HIDIOCSFEATURE` succeeds whether or not the firmware liked the packet,
+        so a method that echoed its own argument back would turn the UI into a
+        mirror of its own input. Returns None when the write was not
+        acknowledged, and does not read in that case: a read that happens to
+        succeed after a refused write looks exactly like confirmation.
+
+        The settle between the two is not optional here. A user clicking Apply
+        repeatedly turns single writes into a burst, and a read inside a burst
+        returns a coherent earlier state; an isolated write followed by a read
+        was measured correct 30/30, but "isolated" is not something this method
+        can promise about its caller.
+
+        **Which keys may be assigned is the caller's policy, not this method's.**
+        `keymap.locked_keys` names the two whose loss breaks the `Fn`+`Esc`
+        factory reset, and it needs a whole key map to do it — which belongs to
+        the page that has one, not to a method that writes a single key.
+        """
+        if not self.write_key_assign(key_id, layer, function_id, data,
+                                     profile_id=profile_id):
+            return None
+        self.settle()
+        return self.read_key_assign(key_id, layer, profile_id=profile_id)
+
     def restore_key_map(self, key_map, profile_id=protocol.DEFAULT_PROFILE_ID):
         """Put a saved key map back. Returns [((key_id, layer), ok), ...].
 

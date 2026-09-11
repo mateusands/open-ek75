@@ -1108,6 +1108,39 @@ list, where "Fn+Shift is still Shift" is noise; that filter now lives in
 `keymap.is_bare_modifier`, asked for by the two shortcut builders, rather than
 inside the decoder where it silently applied to combinations too.
 
+### The data bytes of the lighting functions, as observed
+
+Listing the copyable assignments for the GUI's remap page put them side by side,
+which is the first time their data bytes could be compared. Read from this
+keyboard:
+
+| Shortcut | FunctionId | data |
+|---|---|---|
+| `Fn`+`↑` | 54 Cycle brightness | `[4, 0, 0, 0, 0]` |
+| `Fn`+`↓` | 54 | `[4, 0, 1, 0, 0]` |
+| `Fn`+`=` | 54 | `[1, 0, 0, 0, 0]` |
+| `Fn`+`-` | 54 | `[1, 0, 1, 0, 0]` |
+| `Fn`+`→` | 48 Lighting speed | `[0, 0, 0, 0, 0]` |
+| `Fn`+`←` | 48 | `[0, 1, 0, 0, 0]` |
+| `Fn`+`\` | 53 Cycle effect | `[1, 1, 0, 0, 0]` |
+| `Fn`+`R-Alt` | 53 | `[4, 1, 0, 0, 0]` |
+| `Fn`+`]` | 55 Cycle colour | `[1, 1, 0, 0, 0]` |
+| `Fn`+`F12` | 45 Win/Mac layout | `[2, 0, 0, 0, 0]` |
+| `Fn`+`L-Win` | 47 Lock the Windows key | `[2, 0, 0, 0, 0]` |
+| `Fn`+`~` | 46 Show battery level | `[0, 0, 0, 0, 0]` |
+
+The pairs that differ only in their direction differ in **one byte**, and not
+the same byte: brightness in `data[2]` (0 up, 1 down), speed in `data[1]`.
+`data[0]` varies between pairs that do the same thing (`Fn`+`↑` is 4 where
+`Fn`+`=` is 1), so it is plainly not the direction.
+
+**No meaning is claimed for any of this.** It is recorded because it is what the
+device reports, and because the alternative — a UI offering "Cycle brightness"
+four times with no way to tell the entries apart — is what made it visible. The
+remap page sidesteps the question entirely by copying the whole five-byte value
+and labelling it with the key it came from, so a user picks "what `Fn`+`↑`
+does" without anyone having to know why it is a 4.
+
 ### How an unnamed `FunctionId` gets found
 
 Read both layers and look for rows that fall through to the raw `fid=NN`

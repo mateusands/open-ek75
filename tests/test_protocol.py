@@ -915,6 +915,147 @@ def test_an_aborted_lighting_restore_still_settles():
         lighting.device = real
 
 
+def test_assign_key_reports_what_the_keyboard_stored_not_what_was_asked():
+    """Write, let the link settle, then read — and return the read.
+
+    The requested value and the stored value can differ, and only the second one
+    is true. Returning the request would make the UI a mirror of its own input,
+    which is the exact failure `HIDIOCSFEATURE` invites: the ioctl succeeds
+    whether or not the firmware liked the packet.
+
+    The settle sits between the two because a user clicking Apply repeatedly
+    turns single writes into a burst, and a read inside a burst returns a
+    coherent earlier state. One isolated write then a read was measured correct
+    30/30, but "isolated" is not something this method can promise.
+    """
+    from ek75.core import lighting, protocol
+
+    calls = []
+
+    class Keyboard:
+        """Stores the write, and answers the read with something different."""
+        settle = staticmethod(lambda: calls.append("settle"))
+
+        @staticmethod
+        def command_process(fd, packet, **kw):
+            is_get = packet[protocol.HDR_COMMAND] & protocol.GET_CMD
+            calls.append("read" if is_get else "write")
+            if not is_get:
+                return packet
+            reply = bytearray(protocol.REPORT_SIZE)
+            reply[protocol.HDR_STATUS] = 0x02
+            reply[protocol.PAYLOAD_BASE + 2] = 6
+            reply[protocol.PAYLOAD_BASE + 3:protocol.PAYLOAD_BASE + 8] = \
+                bytes([0, 99, 0, 0, 0])              # NOT what was requested
+            return bytes(reply)
+
+    real = lighting.device
+    session = lighting.Session.__new__(lighting.Session)
+    session.fd = None
+    try:
+        lighting.device = Keyboard
+        got = session.assign_key(50, protocol.LAYER_FN, 6, [0, 71, 0, 0, 0])
+    finally:
+        lighting.device = real
+
+    assert calls == ["write", "settle", "read"], calls
+    assert got == {"function_id": 6, "data": [0, 99, 0, 0, 0]}, (
+        "returned the requested value instead of the stored one")
+
+
+def test_assign_key_says_nothing_rather_than_guessing_when_the_write_is_refused():
+    """A write the firmware never acknowledged must not be followed by a read
+    that happens to succeed and looks like confirmation."""
+    from ek75.core import lighting, protocol
+
+    calls = []
+
+    class Refuses:
+        settle = staticmethod(lambda: calls.append("settle"))
+
+        @staticmethod
+        def command_process(fd, packet, **kw):
+            calls.append("write")
+            return None
+
+    real = lighting.device
+    session = lighting.Session.__new__(lighting.Session)
+    session.fd = None
+    try:
+        lighting.device = Refuses
+        got = session.assign_key(50, protocol.LAYER_FN, 6, [0, 71, 0, 0, 0])
+    finally:
+        lighting.device = real
+
+    assert got is None
+    assert calls == ["write"], f"kept going after a refused write: {calls}"
+
+
+def test_the_keys_that_must_not_be_remapped_are_found_in_the_live_map():
+    """The escape hatch is `Fn`+`Esc`, so BOTH of those keys have to be locked.
+
+    An earlier version of this plan locked only the `Fn` key. That leaves the
+    hatch just as breakable from the other end: remap `Esc` and `Fn`+`Esc` no
+    longer reaches the factory reset, which is the recovery path every other
+    safety claim about key writing rests on.
+
+    Derived from the live map rather than from hardcoded ids, because the ids
+    are this PID's. The keyboard names them itself: one key carries the `Fn`
+    modifier (function id 10) and one carries `Factory reset` (44). On the unit
+    this was written against those are 107 and 1, and nothing here says so.
+    """
+    from ek75.core import keymap
+
+    key_map = {
+        (1, 0): {"function_id": 6, "data": [0, 41, 0, 0, 0]},    # Esc
+        (1, 1): {"function_id": 44, "data": [0, 0, 0, 0, 0]},    # Fn+Esc = reset
+        (107, 0): {"function_id": 10, "data": [64, 0, 0, 0, 0]},  # Fn
+        (107, 1): {"function_id": 10, "data": [64, 0, 0, 0, 0]},
+        (61, 0): {"function_id": 6, "data": [0, 4, 0, 0, 0]},     # A, remappable
+        (61, 1): None,
+    }
+    assert keymap.locked_keys(key_map) == {1, 107}
+
+    # A keyboard that reports neither locks nothing — and a caller that then
+    # writes has no hatch, which is the page's problem to say out loud, not
+    # something to paper over here with a guessed id.
+    assert keymap.locked_keys({(61, 0): {"function_id": 6,
+                                          "data": [0, 4, 0, 0, 0]}}) == set()
+    assert keymap.locked_keys({}) == set()
+    assert keymap.locked_keys({(9, 0): None}) == set()
+
+
+def test_only_vetted_functions_can_be_copied_from_one_key_to_another():
+    """Copying bytes the keyboard produced is safe only if the *function* is.
+
+    "Replay what this device reported" keeps the write inside validated byte
+    patterns, but it says nothing about whether the result is sane. Copying
+    `Factory reset` (44) onto a letter means one stray keystroke wipes the
+    keyboard; copying `Knob rotation` (39) onto a key that cannot rotate is
+    nonsense; copying the `Fn` modifier (10) makes a second Fn.
+
+    So the copy source is an allowlist, not everything the device reports.
+    Lighting and layout toggles are on it because losing one costs a setting;
+    resets, pairing and the knob are off it because losing one costs the
+    keyboard, the connection, or nothing sensible at all.
+    """
+    from ek75.core import keymap
+
+    for safe in (45, 46, 47, 48, 49, 53, 54, 55):
+        assert keymap.is_copyable(safe), f"function {safe} should be copyable"
+
+    for unsafe, why in ((44, "factory reset"), (10, "the Fn modifier"),
+                        (41, "Bluetooth pairing"), (42, "2.4G pairing"),
+                        (39, "knob rotation"), (40, "knob press"),
+                        (1, "mouse button"), (32, "mouse cursor")):
+        assert not keymap.is_copyable(unsafe), f"{why} must not be copyable"
+
+    # 6 and 8 are the keyboard and media usages, which the picker offers
+    # directly and builds itself — they are not reached through the copy path.
+    assert not keymap.is_copyable(6)
+    assert not keymap.is_copyable(8)
+
+
 def test_a_burst_leaves_the_link_quiet_exactly_once():
     """A run of writes settles at the end, not per item, and not never.
 
