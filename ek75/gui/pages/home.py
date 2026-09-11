@@ -119,9 +119,30 @@ class HomePage(ttk.Frame):
 
     def _on_key_map(self, key_map):
         if key_map is None:
-            self._fn_status.configure(text=i18n.t("fn_needs_device"))
+            self._show_status(i18n.t("fn_needs_device"))
             return
         self._show_fn_shortcuts(keymap.fn_shortcuts_from_map(self.profile, key_map))
+
+    def _show_status(self, text):
+        """Replace the list with a message — the exact inverse of showing it.
+
+        Setting the label's text is not enough on a *second* pass: the first
+        successful read calls `pack_forget` on it and leaves a populated grid
+        behind, so a later failure used to change the text of an invisible
+        label and leave the old shortcuts on screen. That is this project's
+        worst failure mode in UI form — stale data presented as current, for a
+        keyboard that is no longer plugged in.
+        """
+        if self._fn_grid is not None:
+            self._fn_grid.destroy()
+            self._fn_grid = None
+        self._fn_status.configure(text=text)
+        # `winfo_manager()` and not `winfo_ismapped()`: the question is whether
+        # pack still manages this label, and ismapped answers a different one —
+        # it is False for every widget under a withdrawn or not-yet-drawn
+        # toplevel, packed or not.
+        if not self._fn_status.winfo_manager():
+            self._fn_status.pack(anchor="w")
 
     def _show_fn_shortcuts(self, shortcuts):
         """Render the live list. Called on the Tk thread by the controller."""

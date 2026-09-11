@@ -677,4 +677,98 @@ def test_describe_takes_raw_values_so_the_rule_exists_once():
     assert keymap.describe(6, [0, 70, 0, 0, 0]) == ("Print Screen", "Print Screen")
     assert keymap.describe(8, [1, 148, 0, 0, 0]) == ("My computer", "Meu computador")
     assert keymap.describe(54, [1, 0, 0, 0, 0])[0] == "Cycle brightness"
-    assert keymap.describe(6, [2, 0, 0, 0, 0]) is None       # a bare modifier
+
+    # This line used to assert `is None` for a bare modifier. That was the old
+    # behaviour, and it was wrong rather than merely terse: see
+    # test_a_modifier_is_part_of_the_assignment_not_noise below. The filtering
+    # it stood for now lives in `is_bare_modifier`, where the shortcut lists
+    # that actually want it can ask for it.
+    assert keymap.describe(6, [2, 0, 0, 0, 0]) == ("Left Shift", "Shift esquerdo")
+    assert keymap.is_bare_modifier(6, [2, 0, 0, 0, 0]) is True
+
+
+def test_a_modifier_is_part_of_the_assignment_not_noise():
+    """`data[0]` is the HID modifier bitmask and dropping it reports a wrong key.
+
+    `describe` read only `data[1]`, the usage. For a key assigned Ctrl+C the
+    reply is `[0x01, 0x06, ...]` and the old code called that "C" — not an
+    incomplete answer but a false one, in the command whose entire purpose is
+    telling the user what a key does.
+
+    Two independent sources agree on the bitmask, neither of them this code:
+
+    1. The USB HID boot-keyboard report's modifier byte, bit 0 through bit 7 =
+       LCtrl LShift LAlt LGUI RCtrl RShift RAlt RGUI.
+    2. This keyboard, read live over KEY_CMD_ASSIGN. Its eight modifier keys
+       answered on the base layer with exactly those single-bit values:
+       L-Ctrl 1, L-Shift 2, L-Alt 4, L-Win 8, R-Ctrl 16, R-Shift 32, R-Alt 64.
+       (No key on this model carries bit 7, Right GUI.)
+    """
+    from ek75.core import keymap
+
+    # Source 2, transcribed from the live read, key label -> data[0].
+    measured = {"L-Ctrl": 1, "L-Shift": 2, "L-Alt": 4, "L-Win": 8,
+                "R-Ctrl": 16, "R-Shift": 32, "R-Alt": 64}
+    expected_en = {"L-Ctrl": "Left Ctrl", "L-Shift": "Left Shift",
+                   "L-Alt": "Left Alt", "L-Win": "Left Win",
+                   "R-Ctrl": "Right Ctrl", "R-Shift": "Right Shift",
+                   "R-Alt": "Right Alt"}
+    for label, bit in measured.items():
+        described = keymap.describe(6, [bit, 0, 0, 0, 0])
+        assert described is not None, f"{label} (data[0]={bit}) went undescribed"
+        assert described[0] == expected_en[label]
+        assert keymap.is_bare_modifier(6, [bit, 0, 0, 0, 0]) is True
+
+    # The defect this test exists for: a modifier combined with a usage.
+    assert keymap.describe(6, [0x01, 0x06, 0, 0, 0]) == ("Left Ctrl + C",
+                                                         "Ctrl esquerdo + C")
+    assert keymap.is_bare_modifier(6, [0x01, 0x06, 0, 0, 0]) is False
+
+    # Several at once, in bit order regardless of how they were set.
+    assert keymap.describe(6, [0x03, 0x06, 0, 0, 0])[0] == "Left Ctrl + Left Shift + C"
+
+    # Bit 7 has no key on this model but the decoder must not silently drop it.
+    assert keymap.describe(6, [0x80, 0, 0, 0, 0])[0] == "Right Win"
+
+    # Neither a modifier nor a usage is genuinely nothing.
+    assert keymap.describe(6, [0, 0, 0, 0, 0]) is None
+
+
+def test_function_id_47_is_named_because_the_keyboard_emits_it():
+    """`Fn`+`L-Win` answers with function id 47, which had no name.
+
+    It surfaced the way these always will: reading the live base and Fn layers
+    and looking for rows that fell through to the raw `fid=NN` fallback. The
+    vendor's index in `docs/vendor-reference/device.js` calls 47 `LockWin`,
+    sitting between `ShowBatteryLevel` (46) and `LightingSpeed` (48) — both
+    already in the table, which is what makes the identification an id lookup
+    in a list this project already trusts rather than an inference.
+
+    The device profile does not carry this assignment, so no profile-driven
+    test could have caught it; only the keyboard knows.
+    """
+    from ek75.core import keymap
+
+    assert keymap.describe(47, [2, 0, 0, 0, 0]) == ("Lock the Windows key",
+                                                     "Travar a tecla Windows")
+
+
+def test_speed_range_matches_what_the_firmware_produces():
+    """1-3, and this is the strong tier of evidence, not the XAML one.
+
+    `Fn`+`Left`/`Right` are bound to LightingSpeed (48) on this keyboard — which
+    the device profile does not show; it was found by reading the live key map.
+    Pressing them under `open-ek75 watch 1` made the firmware walk its own stored
+    value 3 -> 2 -> 1 -> 2 -> 3 -> 2, never reaching 0 and never exceeding 3.
+
+    A stored 0 does exist — it was the value before the first keypress — so the
+    constants bound what the UI offers, not what the field can physically hold.
+    """
+    assert protocol.SPEED_MIN == 1
+    assert protocol.SPEED_MAX == 3
+    assert protocol.SPEED_MIN <= protocol.SPEED_NORMAL <= protocol.SPEED_MAX
+
+    # A stored 0 must survive being read back rather than being clamped on the
+    # way in: the device reports it, and rewriting it here would hide the state.
+    resp = _padded(bytes.fromhex("02" + "0803020100" + "01" + "05000000"))
+    assert protocol.parse_lighting_effect_response(resp)["speed"] == 0

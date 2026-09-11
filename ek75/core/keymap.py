@@ -20,7 +20,12 @@ Labels are (english, portuguese) pairs so the GUI can show either without a
 second table to keep in sync.
 """
 
-# --- FUNCTION_INDEX (device.js) — only the ids this keyboard's Fn layer uses --
+# --- FUNCTION_INDEX (device.js) — only the ids this keyboard actually emits ---
+# The vendor's index runs to at least 57 and covers mice as well as keyboards;
+# `docs/vendor-reference/device.js` has all of it, in one flat list, so an id
+# that turns up unnamed here is a lookup and not a re-derivation. Only ids
+# observed on this hardware or in its profile are transcribed — a name for a
+# function this model does not have is a guess nobody can check.
 FUNCTION_NAMES = {
     1: ("Mouse button", "Botão do mouse"),
     6: ("Key", "Tecla"),
@@ -34,6 +39,7 @@ FUNCTION_NAMES = {
     44: ("Factory reset", "Reset de fábrica"),
     45: ("Windows / Mac layout", "Layout Windows / Mac"),
     46: ("Show battery level", "Mostrar nível da bateria"),
+    47: ("Lock the Windows key", "Travar a tecla Windows"),
     48: ("Lighting speed", "Velocidade da iluminação"),
     49: ("Lighting direction", "Direção da iluminação"),
     53: ("Cycle lighting effect", "Trocar efeito de iluminação"),
@@ -80,6 +86,25 @@ for _n in range(1, 13):                            # 58-69 are F1-F12
     HID_KEYS[57 + _n] = (f"F{_n}", f"F{_n}")
 del _usage, _letter, _digit, _n
 
+# --- USB HID modifier bitmask — byte 0 of a boot-keyboard report -------------
+# `CombineKey` (6) puts this byte in `data[0]`, so an assignment is a *set* of
+# modifiers plus an optional usage: Ctrl+C arrives as [0x01, 0x06, 0, 0, 0].
+# Confirmed twice over: it is the standard HID bit order, and this keyboard's
+# eight modifier keys read back on the base layer as exactly these single-bit
+# values (L-Ctrl 1, L-Shift 2, L-Alt 4, L-Win 8, R-Ctrl 16, R-Shift 32,
+# R-Alt 64). Bit 7 has no key on this model; it is listed so a model that does
+# have one is not silently mis-decoded.
+HID_MODIFIERS = (
+    (0x01, ("Left Ctrl", "Ctrl esquerdo")),
+    (0x02, ("Left Shift", "Shift esquerdo")),
+    (0x04, ("Left Alt", "Alt esquerdo")),
+    (0x08, ("Left Win", "Win esquerdo")),
+    (0x10, ("Right Ctrl", "Ctrl direito")),
+    (0x20, ("Right Shift", "Shift direito")),
+    (0x40, ("Right Alt", "Alt direito")),
+    (0x80, ("Right Win", "Win direito")),
+)
+
 # --- USB HID Consumer page (0x0C) — the media keys on the F-row --------------
 CONSUMER_KEYS = {
     0xB5: ("Next track", "Próxima faixa"),
@@ -96,10 +121,6 @@ CONSUMER_KEYS = {
     0x223: ("Browser home", "Página inicial"),
 }
 
-# Function ids whose meaning is fully carried by the id itself — the data bytes
-# add nothing a user needs to see.
-_SELF_DESCRIBING = set(FUNCTION_NAMES) - {1, 6, 8, 32}
-
 
 def describe(function_id, data):
     """What one assignment does, as an (english, portuguese) pair, or None.
@@ -108,25 +129,49 @@ def describe(function_id, data):
     stored defaults go through the same decoder — the alternative is two copies
     of the rule that drift apart the first time one is corrected.
 
-    None means "nothing to say": a bare modifier with no usage byte, or a code
-    outside the tables here. It does NOT mean "does nothing" — the Fn-shortcut
-    list adds its own filtering on top, and that filtering is deliberately not
-    part of this function.
+    None means "nothing to say": an empty assignment, or a code outside the
+    tables here. It does NOT mean "does nothing" — the Fn-shortcut list adds its
+    own filtering on top, and that filtering is deliberately not part of this
+    function. `is_bare_modifier` is how a caller asks for the one filter this
+    function used to apply on everyone's behalf.
     """
     if data is None:                               # a key that did not answer
         return None
     data = list(data) + [0, 0, 0, 0, 0]
 
-    if function_id == 6:                           # CombineKey: a keyboard usage
+    if function_id == 6:                           # CombineKey: modifiers + usage
+        # Both halves matter. Reading only the usage described a key assigned
+        # Ctrl+C as "C" — a false answer, not an incomplete one, from the
+        # command whose whole job is saying what a key does.
+        parts = [names for bit, names in HID_MODIFIERS if data[0] & bit]
         usage = data[1]
-        if usage == 0:                             # a bare modifier (Fn+Shift)
+        if usage:
+            named = HID_KEYS.get(usage)
+            if named is None:                      # a usage outside the table
+                return None                        # do not guess at a name
+            parts.append(named)
+        if not parts:                              # no modifier and no usage
             return None
-        return HID_KEYS.get(usage)
+        return (" + ".join(p[0] for p in parts), " + ".join(p[1] for p in parts))
 
     if function_id == 8:                           # MediaKeys: a consumer usage
         return CONSUMER_KEYS.get((data[0] << 8) | data[1])
 
     return FUNCTION_NAMES.get(function_id)
+
+
+def is_bare_modifier(function_id, data):
+    """True when an assignment is only modifiers — `Fn`+`Shift` is still Shift.
+
+    Worth naming in a full key listing and worth leaving out of a shortcut list,
+    which is why this is a separate question from `describe`. It used to be
+    answered inside `describe` by returning None, which also threw away the
+    modifier on every combination that had a usage too.
+    """
+    if data is None or function_id != 6:
+        return False
+    data = list(data) + [0, 0, 0, 0, 0]
+    return bool(data[0]) and not data[1]
 
 
 def describe_fn(key):
@@ -136,16 +181,17 @@ def describe_fn(key):
     keyboard connected. When one is connected, prefer the live reply — this
     keyboard was measured disagreeing with its own profile on 23 assignments.
 
-    None means "nothing worth showing in a shortcut list": no Fn assignment, a
-    bare modifier, or a plain letter that only repeats itself. That last filter
-    is why this is not the same function as `describe`.
+    None means "no Fn assignment" or "a bare modifier" — those two, and no more.
+    It does NOT drop a key whose Fn layer merely repeats its base layer: that is
+    `is_passthrough`, applied by `fn_shortcuts` one level up, because it needs
+    both layers and this function is handed only one. An earlier version of this
+    docstring claimed the filter lived here; it never did.
     """
     if key.fn_function_id is None:
         return None
-    described = describe(key.fn_function_id, key.fn_function_data)
-    if described is None:
-        return None
-    return described
+    if is_bare_modifier(key.fn_function_id, key.fn_function_data):
+        return None                                # Fn+Shift is still Shift
+    return describe(key.fn_function_id, key.fn_function_data)
 
 
 def is_passthrough(key):
@@ -196,6 +242,8 @@ def fn_shortcuts_from_map(profile, key_map):
             continue
         if base is not None and base == fn:        # Fn repeats the base layer
             continue
+        if is_bare_modifier(fn["function_id"], fn["data"]):
+            continue                               # Fn+Shift is still Shift
         described = describe(fn["function_id"], fn["data"])
         if described is not None:
             out.append((key.label, described))

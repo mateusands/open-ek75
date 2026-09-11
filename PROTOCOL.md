@@ -115,7 +115,7 @@ than guessed at; the app renders some effects in software (`LedInterface` has
 `RainbowWRun`, `RaindropRun`, `DiffusionRun` and friends, plus
 `SetVirtualLedEffectFrame`), so ids at 128+ are plausibly that, unverified.
 
-### `Speed` is 1-3, not 0-255
+### `Speed` is 1-3, not 0-255 — confirmed by the firmware itself
 
 `PageLedRegionTg`'s compiled XAML declares the speed slider `Minimum="1"`
 `Maximum="3"`, which is why the UI shows three labels (slow / normal / fast),
@@ -123,6 +123,21 @@ and `SetLedParamControllerState` rewrites a stored `0` to `2` before
 displaying it — "normal" being the middle of a three-position control. The
 same method disables the slider entirely for effects without a speed;
 `protocol.EFFECTS_WITH_SPEED` is that list.
+
+**Confirmed on hardware, without writing anything.** This keyboard binds
+`LightingSpeed` (48) to `Fn`+`←` and `Fn`+`→` (see the CLASS_KEY section — the
+device profile hides this). Running `open-ek75 watch 1` and pressing them makes
+the firmware change its own stored value, and `watch` prints what moved:
+
+```
+speed=0  ->  3  ->  2  ->  1  ->  2  ->  3  ->  2
+```
+
+It never produced 0 and never exceeded 3. The XAML said 1-3; the firmware's own
+key handler agrees, which is a stronger tier of evidence than reading a slider
+declaration — and it cost no write. Note that a *stored* 0 does exist (it was the
+value before the first keypress); the Fn cycle simply never produces one, which
+is why the vendor's app rewrites a stored 0 to 2 before displaying it.
 
 ### Brightness: a 0-255 byte, shown as 1-100
 
@@ -674,22 +689,33 @@ Decoded from `ek75/data/0101.json`'s `default-fn-function-Id` fields against
 `FUNCTION_INDEX` in `docs/vendor-reference/device.js`. Only three of the 83
 keys carry a lighting function on this model:
 
-| Shortcut | `FUNCTION_INDEX` | What it does |
-|----------|------------------|--------------|
-| `Fn` + `[` | 53 `LightingModeV2` | cycles the effect |
-| `Fn` + `]` | 55 `LightingColorAdjustV2` | cycles the colour |
-| `Fn` + `Space` | 54 `BrightnessAdjust` | cycles the brightness |
+> ⚠️ **The table below is the vendor profile's answer, and on this unit it is
+> wrong.** It is kept because it is what `0101.json` says, and because the
+> reasoning it led to is worth not repeating. The **measured** map — read from
+> the keyboard with `open-ek75 keys` — is under "The device profile disagrees
+> with the keyboard — 23 times" in `CLASS_KEY` below, and that one is
+> authoritative.
 
-**There is no key bound to `LightingSpeed` (48) or `LightingDirection` (49)**
-on this keyboard, which matters for how the remaining unknowns can be
-confirmed: `open-ek75 watch` can observe what the firmware does to `effect`,
-`colors` and `brightness` on its own, but `flag` and `speed` have to be
-written and looked at. Do not plan a "watch the Fn key" experiment for those.
+| Shortcut | `FUNCTION_INDEX` | What it does | Measured on this unit |
+|----------|------------------|--------------|-----------------------|
+| `Fn` + `[` | 53 `LightingModeV2` | cycles the effect | ❌ plain `[` |
+| `Fn` + `]` | 55 `LightingColorAdjustV2` | cycles the colour | ✅ correct |
+| `Fn` + `Space` | 54 `BrightnessAdjust` | cycles the brightness | ❌ plain `Space` |
 
-Observed with `watch` on region 1: pressing `Fn` + `[` moved the effect from
-`Static` to `Neon` and the colour list from `[(255, 0, 0)]` to `[]` — the
-firmware clears the colours for an effect it colours itself, which corroborates
-treating `Neon` as a colourless effect in the UI.
+**What this section used to conclude — that no key is bound to `LightingSpeed`
+(48) — was false**, and it cost an experiment. `Fn`+`←`/`→` are bound to it;
+the profile simply does not show it. `Speed` was settled by watching after all
+(see "`Speed` is 1-3"). What survives is `LightingDirection` (49): no key binds
+it on this unit, and that is now measured rather than inferred.
+
+Observed with `watch` on region 1: pressing the effect-cycling shortcut moved
+the effect from `Static` to `Neon` and the colour list from `[(255, 0, 0)]` to
+`[]` — the firmware clears the colours for an effect it colours itself, which
+corroborates treating `Neon` as a colourless effect in the UI. *This
+observation was originally written as "`Fn` + `[`", naming the key from the
+profile rather than from the keyboard; the key that actually cycles the effect
+here is `Fn`+`\` (or `Fn`+`R-Alt`). The observation stands — what the firmware
+did is what was watched — only the key's name in it was wrong.*
 
 ## Two grades of confirmation
 
@@ -965,6 +991,51 @@ Confirmed on hardware: **all 83 keys answered on both layers**, 166 reads in
 1.56 s, no failures. `KEY_CMD_BULK_ASSIGN` (8) exists and is not used — a second
 untested packet shape to save about a second is a bad trade.
 
+### `FunctionData` for `CombineKey` (6) is *two* fields, not one
+
+    data[0]  HID modifier bitmask
+    data[1]  Keyboard-page (0x07) usage
+    data[2..4]  zero on every assignment this keyboard reports
+
+Reading only `data[1]` costs nothing on an ordinary key and reports the **wrong
+key** on a combination: an assignment of Ctrl+C arrives as `[0x01, 0x06, 0, 0,
+0]` and gets described as "C". The modifier is not decoration, it is half of
+what the key does.
+
+The bit order is the standard USB HID boot-keyboard report's modifier byte, and
+this keyboard confirms it — its eight modifier keys read back on the base layer
+as exactly these single-bit values:
+
+| Bit | Value | Key on this model |
+|---|---|---|
+| 0 | `0x01` | `L-Ctrl` |
+| 1 | `0x02` | `L-Shift` |
+| 2 | `0x04` | `L-Alt` |
+| 3 | `0x08` | `L-Win` |
+| 4 | `0x10` | `R-Ctrl` |
+| 5 | `0x20` | `R-Shift` |
+| 6 | `0x40` | `R-Alt` |
+| 7 | `0x80` | *(no key — Right Win)* |
+
+A **bare** modifier — bitmask set, usage 0 — is a real assignment and worth
+naming in a full key listing. It is only uninteresting in an *Fn-shortcut*
+list, where "Fn+Shift is still Shift" is noise; that filter now lives in
+`keymap.is_bare_modifier`, asked for by the two shortcut builders, rather than
+inside the decoder where it silently applied to combinations too.
+
+### How an unnamed `FunctionId` gets found
+
+Read both layers and look for rows that fall through to the raw `fid=NN`
+fallback. That is how `Fn`+`L-Win` turned up as function id **47** — an
+assignment **the device profile does not contain at all**, so no amount of
+checking against `0101.json` could have surfaced it. The vendor's index in
+`docs/vendor-reference/device.js` names 47 `LockWin`, between
+`ShowBatteryLevel` (46) and `LightingSpeed` (48), both of which this project
+already trusts from that same list.
+
+After adding it, all 166 assignments on this unit decode to a name and none
+falls through.
+
 ### The device profile disagrees with the keyboard — 23 times
 
 This is the most useful thing learned here, and it is a warning about every
@@ -1064,10 +1135,16 @@ own; it is not a way back.
 
 1. **`open-ek75 watch 1`, then press the Fn lighting shortcuts.** Writes
    nothing: the firmware changes its own state and `watch` prints which field
-   moved. This model has exactly three such keys (see "The Fn lighting
-   shortcuts" below), which settles effect, colour and brightness — **but not
-   direction, because this keyboard has no Fn key bound to it.** `Flag` can
-   only be confirmed by writing it and looking at the keyboard.
+   moved. This model binds four of them (see "The Fn lighting shortcuts"
+   below) — effect, colour, brightness and speed — **but not direction, which
+   no Fn key on this keyboard is bound to.** `Flag` can only be confirmed by
+   writing it and looking at the keyboard.
+
+   Speed is **done**: pressing `Fn`+`←`/`→` walked the stored value
+   3 → 2 → 1 → 2 → 3 → 2 and never left 1-3, confirming the range without a
+   single write (see "`Speed` is 1-3"). This entry was previously written as
+   settling only three fields, because the vendor profile does not show the
+   `Fn`+`←`/`→` binding and the live key map had not been read yet.
 
 2. **`Wave` with each direction — the single most valuable test left.**
 
@@ -1084,8 +1161,11 @@ own; it is not a way back.
    `backup`/`restore`.
 
 3. **`Speed` 1 vs 3 on `Wave`** — the same command with `--speed 1` and
-   `--speed 3`. Speed has been acknowledged at 2 but never observed to change
-   anything, because everything sent before `Wave` was a non-animating effect.
+   `--speed 3`. The *range* is settled (above); what is still unobserved is
+   whether the number changes how fast an animation actually runs, because
+   everything sent before `Wave` was a non-animating effect. Watching the
+   stored value move proves the firmware accepts and keeps it, not that it
+   renders it — the same gap that `Flag` turned out to fall into.
 
 4. **Multi-colour effects** (`colors=[(r,g,b), ...]`, up to five) — the last
    wire feature the repo models but has never exercised. Would confirm whether
