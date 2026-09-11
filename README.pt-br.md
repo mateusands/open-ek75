@@ -127,8 +127,17 @@ o mapa de teclas (`keys` — o que cada tecla faz nas duas camadas, lido do
 teclado e não do perfil do fabricante, que discorda deste hardware em 23
 atribuições) e quais perfis existem e qual está ativo (`probe`).
 
-**Não implementado**: mapas de cor por tecla, *remapeamento* de teclas, macros,
-e criar ou trocar de perfil. Este último merece ser dito sem rodeios: o
+*Implementado, e escreve*: o `backup` agora grava o mapa de teclas junto com a
+iluminação, e o `restore` devolve os dois — então um teclado cujas teclas foram
+alteradas pelo programa de Windows do fabricante pode voltar a um estado que
+você salvou. Use `--keys-only` ou `--lighting-only` para mexer só em um deles.
+A saída de emergência, se algo der errado, está no próprio teclado:
+**`Fn`+`Esc` é um reset de fábrica**, ligado no firmware, que não depende de
+nada deste software.
+
+**Não implementado**: mapas de cor por tecla, escolher uma *nova* atribuição de
+tecla (o `backup`/`restore` só devolve o que o seu próprio teclado reportou),
+macros, e criar ou trocar de perfil. Este último merece ser dito sem rodeios: o
 aplicativo oficial do Windows mostra Perfil 1/2/3, e este teclado reporta
 exatamente um. Os outros dois não estão escondidos — eles não existem, e
 criá-los é uma escrita persistente cujo desfazer nunca foi testado. A interface

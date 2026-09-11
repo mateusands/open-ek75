@@ -190,8 +190,48 @@ class Session:
             protocol.build_set_lighting_brightness(region_id, brightness),
         ) is not None
 
+    def write_key_assign(self, key_id, layer, function_id, data,
+                         profile_id=protocol.DEFAULT_PROFILE_ID):
+        """Assign one key on one layer. Returns whether the firmware ACKed.
+
+        Writes persistent memory. The only caller in this project is
+        `restore_key_map`, which can send nothing but bytes this keyboard
+        produced — choosing a *new* assignment is deliberately not implemented
+        yet. See PROTOCOL.md's `SetKeyAssign` section for the way back.
+        """
+        return device.command_process(
+            self.fd,
+            protocol.build_set_key_assign(key_id, layer, function_id, data,
+                                          profile_id=profile_id),
+        ) is not None
+
+    def restore_key_map(self, key_map, profile_id=protocol.DEFAULT_PROFILE_ID):
+        """Put a saved key map back. Returns [((key_id, layer), ok), ...].
+
+        Per-key results rather than one boolean, for the same reason `restore`
+        reports per-region: 166 writes that mostly worked is not a success, and
+        a caller that cannot see which one failed will report it as one.
+
+        Entries that are None are skipped, not written as zeros — None means
+        "this key never answered when the backup was taken", and turning that
+        into `function_id=0, data=[0,0,0,0,0]` would assign it *nothing*, which
+        is a real and destructive assignment rather than a missing one.
+        """
+        applied = []
+        for (key_id, layer), value in key_map.items():
+            if value is None:
+                continue
+            ok = self.write_key_assign(key_id, layer, value["function_id"],
+                                       value["data"], profile_id=profile_id)
+            applied.append(((key_id, layer), ok))
+        return applied
+
     def restore(self, regions):
         """Re-apply a snapshot: effect, colours, flag, speed AND brightness.
+
+        Note that a read issued immediately after these writes can report the
+        *previous* state — see PROTOCOL.md, "A read right after a write can be
+        stale". Verifying a restore means waiting, not just reading.
 
         Brightness is part of the state and has to be part of the way back.
         Leaving it out made `restore` look like it worked while the region came
@@ -204,7 +244,17 @@ class Session:
         """
         applied = []
         for region, info in regions.items():
-            colors = info["colors"] or [(0, 0, 0)]
+            # `[]` is the RGB/rainbow mode and must survive the round trip. The
+            # old `info["colors"] or [(0, 0, 0)]` treated it as "nothing chosen"
+            # because [] is falsy, so every region saved in rainbow came back
+            # solid black — the backup file was right and the keyboard was not.
+            # The firmware accepts an empty list and reports it back empty
+            # (confirmed on region 1 with Wave), so there is nothing to
+            # substitute. A genuinely absent list is a different thing and still
+            # gets the fallback `set_effect` needs.
+            colors = info["colors"]
+            if not colors and colors != []:
+                colors = [(0, 0, 0)]
             ok = self.set_effect(region, info["effect"], colors,
                                  flag=info.get("flag", 0),
                                  speed=info.get("speed", 0))

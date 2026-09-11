@@ -100,16 +100,28 @@ def cmd_off(args):
 
 
 def cmd_backup(args):
+    """Record what the keyboard currently holds, so a write has a way back."""
+    keys = None
     with lighting.Session.open() as session:
-        regions = session.snapshot(range(args.scan))
-    state.save(args.path, regions)
-    for region, info in regions.items():
+        regions = None if args.keys_only else session.snapshot(range(args.scan))
+        if not args.lighting_only:
+            # Key ids come from the profile's layout, never from a range: they
+            # are non-contiguous and run past 83 (the knob sits at 170-172).
+            profile = layout.load()
+            keys = session.read_key_map([k.id for k in profile.keys])
+
+    state.save(args.path, regions, keys=keys)
+    for region, info in (regions or {}).items():
         print(_describe(region, info) + " -- saved")
+    if keys is not None:
+        answered = sum(1 for v in keys.values() if v is not None)
+        print(f"key map: {answered}/{len(keys)} assignments -- saved")
     print(f"\nsaved to {args.path}")
 
 
 def cmd_restore(args):
-    regions = state.load(args.path)
+    regions = {} if args.keys_only else state.load(args.path)
+    keys = None if args.lighting_only else state.load_keys(args.path)
     failed = 0
     with lighting.Session.open() as session:
         for region, ok in session.restore(regions):
@@ -124,6 +136,24 @@ def cmd_restore(args):
                 failed += 1
                 print(f"region {region}: FAILED restoring to {detail}",
                       file=sys.stderr)
+
+        if keys is None and not args.lighting_only:
+            print("no key map in this backup; nothing to restore for keys "
+                  "(back it up with 'backup' first)", file=sys.stderr)
+            if args.keys_only:
+                # The user asked for the key map and nothing else, and nothing
+                # happened. Exiting 0 here would tell a script it worked.
+                # Without the flag this is not a failure: the file held only
+                # lighting and all of it was restored.
+                failed += 1
+        elif keys:
+            results = session.restore_key_map(keys)
+            bad = [k for k, ok in results if not ok]
+            print(f"key map: {len(results) - len(bad)}/{len(results)} restored")
+            for key_id, layer in bad:
+                failed += 1
+                print(f"key {key_id} layer {layer}: FAILED", file=sys.stderr)
+
     return 1 if failed else 0
 
 
@@ -286,6 +316,21 @@ def i18n_lang():
     return "en"
 
 
+def _only_flags(parser):
+    """`--keys-only` / `--lighting-only`, mutually exclusive.
+
+    Backup and restore both cover two independent things now. Someone restoring
+    a lighting mistake should not be made to rewrite 166 key assignments to do
+    it, and someone recovering a key map should not have their current colours
+    replaced by whatever was on screen when the file was written.
+    """
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--keys-only", action="store_true",
+                       help="the key map only, leaving lighting alone")
+    group.add_argument("--lighting-only", action="store_true",
+                       help="the lighting only, leaving the key map alone")
+
+
 def build_parser():
     p = argparse.ArgumentParser(prog="open-ek75",
         description="Configure a Dareu TK51G/EK75 keyboard on Linux "
@@ -328,13 +373,16 @@ def build_parser():
     p_off.add_argument("region", type=int)
     p_off.set_defaults(func=cmd_off)
 
-    p_backup = sub.add_parser("backup", help="save the current state of every region")
+    p_backup = sub.add_parser(
+        "backup", help="save the lighting state and the key map")
     p_backup.add_argument("path", nargs="?", default=state.DEFAULT_PATH)
     p_backup.add_argument("--scan", type=int, default=8)
+    _only_flags(p_backup)
     p_backup.set_defaults(func=cmd_backup)
 
     p_restore = sub.add_parser("restore", help="apply a state saved by 'backup'")
     p_restore.add_argument("path", nargs="?", default=state.DEFAULT_PATH)
+    _only_flags(p_restore)
     p_restore.set_defaults(func=cmd_restore)
 
     p_gui = sub.add_parser("gui", help="open the graphical interface (tkinter)")

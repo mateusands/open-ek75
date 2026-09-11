@@ -123,8 +123,16 @@ physical keyboard in a state you cannot get out of.
 the vendor's profile, which disagrees with this hardware 23 times), and which
 profiles exist and which is active (`probe`).
 
-**Not implemented**: per-key colour maps, key *remapping*, macros, and creating
-or switching profiles. The last one is worth being blunt about: the official
+*Implemented, and it writes*: `backup` now records the key map alongside the
+lighting, and `restore` puts both back — so a keyboard whose keys were changed
+by the vendor's Windows tool can be returned to a state you saved. Use
+`--keys-only` or `--lighting-only` to move just one of them. The way back if
+anything goes wrong is on the keyboard itself: **`Fn`+`Esc` is a factory
+reset**, bound by the firmware, needing nothing from this software.
+
+**Not implemented**: per-key colour maps, choosing a *new* key assignment
+(`backup`/`restore` only puts back what your own keyboard reported), macros,
+and creating or switching profiles. The last one is worth being blunt about: the official
 Windows app shows Profile 1/2/3, and this keyboard reports exactly one. The
 other two are not hidden — they do not exist, and creating them is a persistent
 write whose undo has never been tested. The GUI shows unimplemented features as

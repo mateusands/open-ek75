@@ -717,6 +717,49 @@ profile rather than from the keyboard; the key that actually cycles the effect
 here is `Fn`+`\` (or `Fn`+`R-Alt`). The observation stands — what the firmware
 did is what was watched — only the key's name in it was wrong.*
 
+## A read right after a write can be stale
+
+`command_process` sends the packet and then polls `GET_FEATURE` until the status
+byte says a reply is ready. That is the firmware saying **"I have a reply for
+you"** — it is *not* the firmware saying "the value you wrote is now the value I
+will report". Those are different promises and this keyboard keeps only the
+first one promptly.
+
+Measured on region 1, alternating `Static` red and `Wave` and reading the effect
+straight back, twelve times per row:
+
+| Delay between the write and the read | Reads that returned the *previous* effect |
+|---|---|
+| 0 ms | 6 / 12 |
+| 20 ms | 6 / 12 |
+| 50 ms | 4 / 12 |
+| 100 ms | 3 / 12 |
+| 200 ms | 0 / 12 |
+
+Half the immediate reads were wrong, and the error is not a garbled value — it
+is a *coherent, previous* state, which is exactly the kind that gets believed.
+
+It was found by accident and it is worth saying how, because the accident is
+the point: two `restore` runs back to back printed "restored to Wave" and the
+very next `regions` reported `Static ... colors=[(255,0,0)]` — the state from
+the run *before*. Nothing errored. Every command was acknowledged.
+
+What this means for code here:
+
+- **Never verify a write by reading it back immediately.** The key-map round
+  trips in `SetKeyAssign` below are trustworthy because each read followed a
+  full 166-entry sweep, which takes far longer than 200 ms; a tight
+  write-then-read would have proven much less.
+- `watch` can print a value one step behind after *it* is the thing that
+  changed something. It is only used read-only, where this does not arise.
+- A GUI that writes and then refreshes from the device will show the old value
+  about half the time. The fix is not a bigger poll count inside
+  `command_process` — that loop already got its "ready" reply — it is a wait
+  before the *next* read.
+
+This is not yet handled anywhere in the code. It is written down rather than
+fixed because the fix touches every read path and belongs in its own change.
+
 ## Two grades of confirmation
 
 This file uses "confirmed" in two different strengths, and conflating them is
@@ -1080,15 +1123,84 @@ the map from the device and lists nothing when none is connected, rather than
 falling back to a profile known to be wrong for this unit. `open-ek75 keys
 --diff` prints the divergence for any unit.
 
-### Why `SetKeyAssign` is not implemented
+### `SetKeyAssign` — implemented, and how it was proven
 
-It is a write that has not been validated, and that is the whole reason.
+    SetKeyAssign  HDR_SIZE=8, class 1, cmd 3|SET, HDR_PROFILE=profile
+      payload:    [0]=keyId [1]=layer [2]=FunctionId [3..7]=FunctionData
 
-An earlier draft argued it was merely sequencing — that reading the map first
-gave us the backup the write would need. That was circular and does not survive
-inspection: `restore` cannot re-apply a key map without `SetKeyAssign`, so a
-backup of it would be a file nothing can use. The map is worth reading on its
-own; it is not a way back.
+Byte-identical to `GetKeyAssign` in the header; only the command byte and the
+three extra payload fields differ. That matters for the risk analysis: payload
+[0] and [1] were **already proven** to address the right key, because the GET
+uses the same two offsets and returned the right key's data 166 times out of
+166. Only [2] and [3..7] were unproven.
+
+This project earlier stated that implementing this was circular — that
+`restore` could not be the way back for the very command it is built from. That
+was correct and it is what this section had to answer before any byte was sent.
+
+#### The way back is not this project's code
+
+    Fn + Esc  ->  function id 44, Factory reset
+
+The firmware binds it. Read from the live key map, not from the vendor profile.
+It runs on the keyboard, travels over no bus, and does not care whether
+`SetKeyAssign` is broken — which is exactly what `restore` cannot claim. A
+factory reset also clears the lighting configuration; that half already has a
+confirmed `backup`/`restore`, so the recovery order is **Fn+Esc, then
+`open-ek75 restore`**.
+
+It has not been pressed. Testing the escape hatch means performing the
+destructive act it exists to undo. Dareu's WebHID tool at `dr.dareu.com` is the
+second hatch, and the one that requires trusting nothing in this repository.
+
+#### The validation ladder, as actually run
+
+Every step below was run on hardware, in this order, with the full 166-entry
+map already saved to disk first.
+
+1. **Byte-match test** against `tgdevice.js`.
+
+2. **The identity write.** Write one key's *existing* bytes back to it
+   (`Fn`+`[`, key id 50, layer 1, `fid=6 data=[0,47,0,0,0]`), then re-read the
+   **whole map** and diff it. Result: ACK, **0 of 166 changed**.
+
+   What this proves and what it does not: it proves the firmware parses and
+   accepts a packet of this class, command, size and shape, and — via the wide
+   diff — that the write did not land on some *other* key. It does **not**
+   prove the write path executed at all: firmware commonly skips a flash write
+   when the payload already matches. A narrow re-read of the one key would have
+   proven even less, which is why the diff is over all 166.
+
+3. **Two round trips on one expendable assignment.** `Fn`+`[` was chosen from
+   the live map: it is on the Fn layer (the base `[` is never touched), and it
+   is one of the 45 Fn assignments that are pure passthrough — it does nothing
+   a user would miss. *An earlier draft named `Scroll Lock`; this is a 75%
+   board and has no such key. Naming a key that does not exist is how a "safe
+   test" becomes a packet aimed at an id nobody checked.*
+
+   | Write | Read back | Collateral in the other 165 |
+   |---|---|---|
+   | `fid=6 data=[0,71,0,0,0]` (Scroll Lock, a key this board lacks) | exact | 0 |
+   | `fid=8 data=[0,183,0,0,0]` (MediaKeys, consumer Stop) | exact | 0 |
+   | revert to `fid=6 data=[0,47,0,0,0]` | exact | 0 |
+
+   Trial A moves only the data bytes; trial B also moves `FunctionId`. Between
+   them, offsets [2] and [3..7] are each confirmed by a change that produced
+   exactly the requested read-back. Final whole-map diff against the
+   pre-experiment capture: **0 changed**.
+
+4. **The full restore.** `restore --keys-only` wrote all 166 assignments:
+   166/166 acknowledged, and a whole-map diff against the original capture
+   showed 0 divergences. It takes **~17 s** — roughly 100 ms per write, against
+   ~9 ms per read. A key-map restore is not instant and the UI must not pretend
+   it is.
+
+#### What is deliberately still missing
+
+There is no way to choose a *new* assignment — no remap command, no picker.
+The only bytes this write can send are bytes read back from the same keyboard.
+Selecting new functions is the next slice, and it is a UI problem (naming 57
+function ids and the HID usage tables) rather than a protocol one.
 
 ## `CLASS_PROFILE` (5) — how many profiles, and which one is live
 
@@ -1181,12 +1293,16 @@ hardware has never been sent. Both reasons have to stop applying, not one.
   tables but are outside `TG_LIGHT_EFFECT_INDEX` (0-32). Probably the app's
   software-rendered effects, streamed as frames. Unverified.
 - **`SetTimeToSleep`** — bytes known, deliberately unshipped; see `CLASS_POWER` above.
+- **Choosing a new key assignment.** `SetKeyAssign` is implemented and
+  confirmed (above), but its only caller is `restore`: the bytes it sends are
+  always bytes read back from the same keyboard. A remap command needs a way to
+  *name* 57 function ids and the HID usage tables, which is a UI problem, not a
+  protocol one.
 - **Every `CLASS_PROFILE` write** — `PFL_CMD_CREATE`, `PFL_CMD_DELETE`,
   `PFL_CMD_ACTIVE|SET`, `PFL_CMD_RESET`. The two reads are done and say this
   keyboard holds exactly one profile; see `CLASS_PROFILE` above for why
   creating the other two is its own slice.
 - **Everything outside `CLASS_LIGHTING` and the two `CLASS_POWER` reads**:
-  `CLASS_KEY` (key remapping),
   `CLASS_BUTTON`, `CLASS_MACRO`, `CLASS_SENSOR`/`CLASS_MAGNETIC_AXIS` (this
   model may not be Hall-effect, but the class exists in the shared
   framework), `CLASS_AUDIO`, `CLASS_LCD`, `CLASS_TEST`. Of `CLASS_POWER`, the

@@ -753,6 +753,272 @@ def test_function_id_47_is_named_because_the_keyboard_emits_it():
                                                      "Travar a tecla Windows")
 
 
+def test_set_key_assign_layout():
+    """Port of tgdevice.js `SetKeyAssign(profileId, keyId, layer, fid, data[5])`.
+
+    Byte-identical to the confirmed `GetKeyAssign` header, with SET_CMD instead
+    of GET_CMD and three more payload bytes. Expected bytes composed by hand
+    from the vendor source, not by running the builder:
+
+      00 status | 08 size | 01 class | 03 cmd (3 | SET=0) | 01 profile | 00 pad
+      32 keyId(50) | 01 layer(Fn) | 06 functionId | 00 2f 00 00 00 data
+
+    The value used is the real one this keyboard stores for `Fn`+`[` — plain
+    `[`, HID usage 0x2f — because that is the assignment the hardware round
+    trip in PROTOCOL.md actually writes.
+    """
+    expected = _padded(bytes.fromhex("000801030100" + "320106" + "002f000000"))
+    got = protocol.build_set_key_assign(
+        key_id=50, layer=protocol.LAYER_FN, function_id=6,
+        data=[0, 0x2F, 0, 0, 0], profile_id=1)
+    assert got == expected
+
+    # Same header as the GET that is already confirmed on hardware, except for
+    # the command byte and the size. If these ever diverge, one of them is wrong.
+    get = protocol.build_get_key_assign(50, protocol.LAYER_FN, profile_id=1)
+    assert got[protocol.HDR_CLASS] == get[protocol.HDR_CLASS]
+    assert got[protocol.HDR_PROFILE] == get[protocol.HDR_PROFILE]
+    assert got[protocol.HDR_SIZE] == get[protocol.HDR_SIZE] == 8
+    assert got[protocol.HDR_COMMAND] == protocol.KEY_CMD_ASSIGN | protocol.SET_CMD
+    assert get[protocol.HDR_COMMAND] == protocol.KEY_CMD_ASSIGN | protocol.GET_CMD
+
+
+def test_set_key_assign_refuses_anything_it_cannot_put_on_the_wire():
+    """Every input is bounds-checked, because this one writes persistent memory.
+
+    A four-byte `data` is the dangerous case: it would silently send a zero
+    where the keyboard expects the fifth byte, and nothing downstream would
+    notice. An out-of-range `key_id` is worse — truncated into a byte it would
+    address a *different key*, changing something the caller never named.
+    """
+    ok = dict(key_id=50, layer=protocol.LAYER_FN, function_id=6,
+              data=[0, 0x2F, 0, 0, 0])
+
+    def rejects(**overrides):
+        bad = dict(ok, **overrides)
+        try:
+            protocol.build_set_key_assign(**bad)
+        except ValueError:
+            return True
+        return False
+
+    assert rejects(data=[0, 0x2F, 0, 0])            # four bytes
+    assert rejects(data=[0, 0x2F, 0, 0, 0, 0])      # six
+    assert rejects(data=[0, 256, 0, 0, 0])          # not a byte
+    assert rejects(data=[0, -1, 0, 0, 0])
+    assert rejects(layer=2)                          # neither base nor Fn
+    assert rejects(key_id=256)
+    assert rejects(key_id=-1)
+    assert rejects(function_id=256)
+
+    # And the valid call still works, so the guard is not simply refusing all.
+    assert len(protocol.build_set_key_assign(**ok)) == protocol.REPORT_SIZE
+
+
+def test_backup_round_trips_a_key_map_through_json():
+    """`read_key_map` is keyed by (key_id, layer) tuples; JSON keys are strings.
+
+    `json.dump` raises TypeError on a tuple key, so the composite string is
+    load-bearing and not cosmetic. This asserts the tuples come back as tuples
+    of ints — a version that returned strings would let a caller build a packet
+    addressing key "50" instead of key 50.
+    """
+    import tempfile
+    from ek75.core import state
+
+    keys = {(50, 1): {"function_id": 6, "data": [0, 47, 0, 0, 0]},
+            (1, 0): {"function_id": 6, "data": [0, 41, 0, 0, 0]},
+            (170, 1): None}
+    regions = {1: {"effect": 1, "flag": 0, "speed": 2,
+                   "colors": [[255, 0, 0]], "brightness": 153}}
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "backup.json")
+        state.save(path, regions, keys=keys)
+        assert state.load(path) == regions
+        assert state.load_keys(path) == keys
+
+
+def test_restore_keeps_an_empty_colour_list_instead_of_painting_it_black():
+    """An empty colour list is the RGB/rainbow mode, not "no colour chosen".
+
+    `restore` did `info["colors"] or [(0, 0, 0)]`, and `[]` is falsy, so every
+    region saved in rainbow mode came back solid black. The backup recorded the
+    state correctly; the restore threw it away — the worst shape for this bug,
+    because the file looks right and the keyboard does not.
+
+    The firmware takes an empty list and reports it back as empty: sending
+    `colors=[]` to region 1 with Wave read back as `colors=[]` on hardware, so
+    there is nothing to substitute and no reason to.
+
+    The `or` was not arbitrary — `set_effect` needs at least one colour for
+    effects that take one. That case is a missing/None list, which is a
+    different thing from an empty one, and only it gets the fallback.
+    """
+    from ek75.core import lighting
+
+    sent = []
+
+    class Recorder:
+        @staticmethod
+        def command_process(fd, packet, **kw):
+            sent.append(packet)
+            return packet
+
+    real = lighting.device
+    try:
+        lighting.device = Recorder
+        session = lighting.Session.__new__(lighting.Session)
+        session.fd = None
+        session.restore({1: {"effect": 5, "flag": 0, "speed": 2,
+                             "colors": [], "brightness": 153}})
+    finally:
+        lighting.device = real
+
+    # The first packet is the effect write; its colour count must be zero.
+    effect_packet = sent[0]
+    assert effect_packet[protocol.PAYLOAD_BASE + 1] == 5          # Wave
+    assert effect_packet[protocol.PAYLOAD_BASE + 4] == 0, (
+        "restore substituted a colour for the rainbow mode")
+
+    # And a genuinely absent list still gets the fallback it was there for.
+    sent.clear()
+    try:
+        lighting.device = Recorder
+        session.restore({1: {"effect": 1, "flag": 0, "speed": 0,
+                             "colors": None, "brightness": 100}})
+    finally:
+        lighting.device = real
+    assert sent[0][protocol.PAYLOAD_BASE + 4] == 1
+
+
+def test_restore_key_map_reports_each_key_rather_than_one_verdict():
+    """166 writes that mostly worked is not a success, and must not look like one.
+
+    `restore` already reports per-region for the same reason. A caller handed a
+    single boolean cannot say which key was left wrong, and the honest failure
+    mode for a key map is partial: one NAK in the middle leaves the keyboard in
+    a state that is neither the old one nor the new one.
+
+    Entries recorded as None are skipped, not written: None means "this key did
+    not answer when the backup was taken", and turning it into
+    `function_id=0, data=[0]*5` would assign the key *nothing* — a real and
+    destructive assignment rather than a missing one.
+    """
+    from ek75.core import lighting
+
+    written = []
+
+    class OneKeyRefuses:
+        """Acknowledges everything except key 70, which never replies."""
+        @staticmethod
+        def command_process(fd, packet, **kw):
+            key_id = packet[protocol.PAYLOAD_BASE + 0]
+            layer = packet[protocol.PAYLOAD_BASE + 1]
+            written.append((key_id, layer))
+            return None if key_id == 70 else packet
+
+    key_map = {
+        (50, 1): {"function_id": 6, "data": [0, 47, 0, 0, 0]},
+        (70, 1): {"function_id": 6, "data": [0, 51, 0, 0, 0]},
+        (60, 0): {"function_id": 6, "data": [0, 57, 0, 0, 0]},
+        (99, 1): None,
+    }
+
+    real = lighting.device
+    try:
+        lighting.device = OneKeyRefuses
+        session = lighting.Session.__new__(lighting.Session)
+        session.fd = None
+        results = session.restore_key_map(key_map)
+    finally:
+        lighting.device = real
+
+    assert dict(results) == {(50, 1): True, (70, 1): False, (60, 0): True}
+    assert (99, 1) not in dict(results)              # None was skipped...
+    assert (99, 1) not in written                    # ...and never reached the wire
+    assert sorted(written) == [(50, 1), (60, 0), (70, 1)]
+
+
+def test_saving_lighting_alone_does_not_destroy_a_saved_key_map():
+    """`keys=None` means "nothing to say about keys", not "delete them".
+
+    The GUI's backup button calls `state.save(path, regions)` with no key map,
+    and `--lighting-only` does the same. Both write to the same default path the
+    CLI uses. Without this, backing up lighting from the GUI silently discards
+    166 key assignments the CLI had saved there — destroying a backup is a much
+    worse outcome than failing to make one, and it happens with no error.
+
+    The rule lives in `save` rather than at each call site, so a future third
+    caller cannot reintroduce it by forgetting.
+    """
+    import tempfile
+    from ek75.core import state
+
+    keys = {(50, 1): {"function_id": 6, "data": [0, 47, 0, 0, 0]}}
+    first = {1: {"effect": 1, "flag": 0, "speed": 2,
+                 "colors": [[255, 0, 0]], "brightness": 100}}
+    second = {1: {"effect": 3, "flag": 0, "speed": 1,
+                  "colors": [], "brightness": 200}}
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "backup.json")
+        state.save(path, first, keys=keys)
+        state.save(path, second)                     # lighting only, as the GUI does
+
+        assert state.load(path) == second            # the lighting did update
+        assert state.load_keys(path) == keys         # and the key map survived
+
+    # An explicitly empty map is a different statement and must be honoured.
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "backup.json")
+        state.save(path, first, keys=keys)
+        state.save(path, second, keys={})
+        assert state.load_keys(path) == {}
+
+    # The same rule on the other axis: `backup --keys-only` must not wipe the
+    # lighting it was told not to touch. Same decision, so it lives in the same
+    # place rather than being fixed once per direction.
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "backup.json")
+        state.save(path, first, keys=keys)
+        state.save(path, None, keys={(1, 0): {"function_id": 6,
+                                               "data": [0, 41, 0, 0, 0]}})
+        assert state.load(path) == first             # the lighting survived
+        assert state.load_keys(path) == {(1, 0): {"function_id": 6,
+                                                   "data": [0, 41, 0, 0, 0]}}
+
+
+def test_a_backup_written_before_keys_existed_still_loads():
+    """Every backup on disk today has no "keys" section, and `load` had no guard.
+
+    Two separate promises: `load` keeps returning the regions it always did,
+    and `load_keys` says None rather than raising KeyError or inventing {}.
+    None and {} must stay distinguishable — one means "this file predates key
+    backups", the other "a key map was recorded and was empty", and a caller
+    about to write to hardware should treat them differently.
+    """
+    import json as _json
+    import tempfile
+    from ek75.core import state
+
+    legacy = {"timestamp": "2026-09-07T23:31:00",
+              "regions": {"1": {"effect": 1, "flag": 0, "speed": 2,
+                                 "colors": [[0, 255, 0]], "brightness": 200}}}
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "old.json")
+        with open(path, "w") as f:
+            _json.dump(legacy, f)
+
+        assert state.load(path) == {1: legacy["regions"]["1"]}
+        assert state.load_keys(path) is None
+
+        # A lighting-only backup written today must look the same to load_keys.
+        fresh = os.path.join(tmp, "fresh.json")
+        state.save(fresh, {1: legacy["regions"]["1"]})
+        assert state.load_keys(fresh) is None
+
+
 # --- CLASS_PROFILE (5), read-only -------------------------------------------
 
 def test_get_profile_id_list_probe():

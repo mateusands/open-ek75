@@ -619,6 +619,56 @@ def build_get_key_assign(key_id, layer, profile_id=DEFAULT_PROFILE_ID):
     return bytes(pkt)
 
 
+def _byte(name, value):
+    """Reject anything that would be truncated on its way into a packet byte."""
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ValueError(f"{name} must be an int, got {value!r}")
+    if not 0 <= value <= 255:
+        raise ValueError(f"{name} must be 0..255, got {value}")
+    return value
+
+
+def build_set_key_assign(key_id, layer, function_id, data,
+                         profile_id=DEFAULT_PROFILE_ID):
+    """KEY_CMD_ASSIGN|SET_CMD — port of tgdevice.js `SetKeyAssign`.
+
+    The header is byte-identical to `build_get_key_assign`, which is confirmed
+    on hardware for all 166 assignments; only the command byte and three extra
+    payload bytes differ. Payload offsets [0] and [1] — keyId and layer — are
+    therefore already proven to address the right key. [2] and [3..7] are not.
+
+    **This writes the keyboard's persistent key map.** Every argument is
+    bounds-checked rather than trusted: a five-byte `data` that arrives with
+    four would put a zero where the keyboard expects a modifier, and a `key_id`
+    outside 0..255 would be truncated into addressing a *different key* than
+    the caller named. Neither failure announces itself — `HIDIOCSFEATURE`
+    succeeds either way.
+
+    The way back is `Fn`+`Esc`, the factory reset this firmware binds itself
+    (function id 44, read from the live key map). It runs on the keyboard and
+    needs nothing from this code — which `restore` cannot claim, since restore
+    is this same command. See PROTOCOL.md's `SetKeyAssign` section.
+    """
+    if layer not in (LAYER_BASE, LAYER_FN):
+        raise ValueError(f"layer must be LAYER_BASE or LAYER_FN, got {layer!r}")
+    data = list(data)
+    if len(data) != 5:
+        raise ValueError(f"data must be exactly 5 bytes, got {len(data)}")
+
+    pkt = _new_packet()
+    pkt[HDR_STATUS] = TARGET_ID
+    pkt[HDR_SIZE] = 8
+    pkt[HDR_CLASS] = CLASS_KEY
+    pkt[HDR_COMMAND] = KEY_CMD_ASSIGN | SET_CMD
+    pkt[HDR_PROFILE] = _byte("profile_id", profile_id)
+    pkt[PAYLOAD_BASE + 0] = _byte("key_id", key_id)
+    pkt[PAYLOAD_BASE + 1] = layer
+    pkt[PAYLOAD_BASE + 2] = _byte("function_id", function_id)
+    for i, value in enumerate(data):
+        pkt[PAYLOAD_BASE + 3 + i] = _byte(f"data[{i}]", value)
+    return bytes(pkt)
+
+
 def parse_key_assign_response(resp):
     """Decode a KEY_CMD_ASSIGN reply into the same shape the device profile uses.
 
