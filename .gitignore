@@ -19,7 +19,13 @@ __pycache__/
 build/
 dist/
 .github/
-docs/
+
+# `docs/*` rather than `docs/`, so that a subdirectory can be re-included below:
+# git cannot un-ignore anything whose parent directory is excluded outright.
+# The vendor-binaries rule above still covers them — `docs/*` matches that
+# directory too, and its own entry stays as the explicit statement of intent.
+docs/*
+!docs/investigations/
 
 # capture traffic never enters the repo
 *.pcapng
