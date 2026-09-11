@@ -299,8 +299,15 @@ def cmd_watch(args):
     of `speed`/`brightness` without writing a single unvalidated byte — see
     PROTOCOL.md.
     """
+    # `flush=True` on every line here, and it is not decoration. This command
+    # exists to show changes as they happen, and Python block-buffers stdout
+    # whenever it is not a terminal — a pipe, a `tee`, an editor's output pane.
+    # The buffer then holds everything until it fills or the process exits
+    # cleanly, and a monitor is normally stopped with Ctrl-C or killed. The
+    # result is a tool whose entire output can vanish, which reads as "the
+    # keyboard did nothing" — the one conclusion it must never fake.
     print(f"watching region {args.region} — press the keyboard's own Fn "
-          f"lighting shortcuts. Ctrl-C to stop.\n")
+          f"lighting shortcuts. Ctrl-C to stop.\n", flush=True)
     previous = None
     with lighting.Session.open() as session:
         try:
@@ -318,11 +325,12 @@ def cmd_watch(args):
                         fields = ("effect", "flag", "speed", "brightness", "colors")
                         changed = "   <- changed: " + ", ".join(
                             f for f, a, b in zip(fields, previous, current) if a != b)
-                    print(f"[{stamp}] {_describe(args.region, info)}{changed}")
+                    print(f"[{stamp}] {_describe(args.region, info)}{changed}",
+                          flush=True)
                     previous = current
                 time.sleep(args.interval)
         except KeyboardInterrupt:
-            print("\nstopped.")
+            print("\nstopped.", flush=True)
 
 
 def cmd_gui(args):
