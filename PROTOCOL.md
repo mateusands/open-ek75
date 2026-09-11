@@ -717,48 +717,90 @@ profile rather than from the keyboard; the key that actually cycles the effect
 here is `Fn`+`\` (or `Fn`+`R-Alt`). The observation stands — what the firmware
 did is what was watched — only the key's name in it was wrong.*
 
-## A read right after a write can be stale
+## Under sustained traffic, reads trail the keyboard's real state
 
-`command_process` sends the packet and then polls `GET_FEATURE` until the status
-byte says a reply is ready. That is the firmware saying **"I have a reply for
-you"** — it is *not* the firmware saying "the value you wrote is now the value I
-will report". Those are different promises and this keyboard keeps only the
-first one promptly.
+**Writes are never lost. Reads lag.** That sentence is the whole finding, and an
+earlier version of this section got it wrong in a way worth keeping on the
+record, because the wrong version pointed at the wrong fix.
 
-Measured on region 1, alternating `Static` red and `Wave` and reading the effect
-straight back, twelve times per row:
+### What was first written here, and why it was wrong
 
-| Delay between the write and the read | Reads that returned the *previous* effect |
+The first draft said *"a read right after a write can be stale"*, with a table
+of delays between the write and the read. It came from a real, deterministic
+experiment — the numbers reproduce exactly — but the conclusion drawn from it
+did not survive being attacked:
+
+- An **isolated** write followed by an immediate read, with the bus quiet
+  beforehand, is correct **30 times out of 30**. The write→read gap is not the
+  variable.
+- Adding three extra reads per iteration made the *first* read correct 20 times
+  out of 20, even though that read still happened ~9 ms after the write.
+
+A fix built on the first draft would have been a delay before every read: it
+would have cost latency on every screen in the GUI and fixed nothing, because
+the gap it lengthened was never the problem.
+
+### What the variable actually is
+
+Sustained back-to-back command traffic. In a loop that writes and reads with no
+pause, the keyboard's replies trail its real state, and the trailing shrinks as
+the loop slows down. Measured on region 1, alternating `Static` and `Wave`, with
+a uniform pause between *every* command:
+
+| Pause between commands | Reads returning an earlier state |
 |---|---|
-| 0 ms | 6 / 12 |
-| 20 ms | 6 / 12 |
-| 50 ms | 4 / 12 |
-| 100 ms | 3 / 12 |
-| 200 ms | 0 / 12 |
+| 0 ms | 8 / 16 |
+| 10 ms | 8 / 16 |
+| 20 ms | 7 / 16 |
+| 40 ms | 5 / 16 |
+| 80 ms | 0 / 16 |
 
-Half the immediate reads were wrong, and the error is not a garbled value — it
-is a *coherent, previous* state, which is exactly the kind that gets believed.
+The error is never garbage — it is a *coherent, earlier* state, which is the
+kind that gets believed.
 
-It was found by accident and it is worth saying how, because the accident is
-the point: two `restore` runs back to back printed "restored to Wave" and the
-very next `regions` reported `Static ... colors=[(255,0,0)]` — the state from
-the run *before*. Nothing errored. Every command was acknowledged.
+### Writes are safe, and this was tested directly
 
-What this means for code here:
+Three bursts of 24 rapid alternating writes, each ending on a known effect, each
+read back after the traffic stopped: the final state matched the last write
+every time. Nothing is dropped, nothing is corrupted, nothing needs retrying.
+`restore` and `restore_key_map` land what they send — the 166-assignment restore
+verified with 0 divergences is the same result at a larger scale.
 
-- **Never verify a write by reading it back immediately.** The key-map round
-  trips in `SetKeyAssign` below are trustworthy because each read followed a
-  full 166-entry sweep, which takes far longer than 200 ms; a tight
-  write-then-read would have proven much less.
-- `watch` can print a value one step behind after *it* is the thing that
-  changed something. It is only used read-only, where this does not arise.
-- A GUI that writes and then refreshes from the device will show the old value
-  about half the time. The fix is not a bigger poll count inside
-  `command_process` — that loop already got its "ready" reply — it is a wait
-  before the *next* read.
+### How long the keyboard needs to catch up
 
-This is not yet handled anywhere in the code. It is written down rather than
-fixed because the fix touches every read path and belongs in its own change.
+After a burst of 24 commands, reading the effect back:
+
+| Quiet time after the burst | First read wrong |
+|---|---|
+| 0 ms | 4 / 8 |
+| 50 ms | 4 / 8 |
+| 100 ms | 0 / 8 |
+| 200 ms | 0 / 8 |
+| 300 ms | 0 / 8 |
+
+**100 ms of quiet is enough.** This is the number any fix should be built on.
+
+### Where it actually bites
+
+It is narrower than it first looked. A GUI that writes one value and refreshes
+is the isolated case, which is correct. What is not correct is reading right
+after a *burst* — which is exactly how it was found: `open-ek75 restore` twice
+in a row, then `open-ek75 regions`, reported the state from the run before.
+Every command was acknowledged and nothing errored.
+
+So the rule for this codebase is: **after a run of commands, be quiet for
+100 ms before reading.** Not "wait before every read".
+
+That rule is `device.SETTLE_AFTER_BURST` (150 ms — the measured 100 plus a
+margin that is a judgement call, not a measurement) and `device.settle()`, which
+`Session.restore` and `Session.restore_key_map` call in a `finally` once per
+burst. Counted on commands *attempted*, not acknowledged: `command_process`
+sends before it polls, so a call that raised still put bytes on the wire, and an
+aborted burst is precisely when the caller reads next.
+
+Verified by re-running the scenario that exposed it — two restores then a read,
+six times: 0 wrong, where it had failed roughly one run in three. The cost on a
+166-assignment key-map restore is 17.3 s to 17.5 s.
 
 ## Two grades of confirmation
 

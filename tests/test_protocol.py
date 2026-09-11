@@ -839,6 +839,155 @@ def test_backup_round_trips_a_key_map_through_json():
         assert state.load_keys(path) == keys
 
 
+def test_the_real_settle_actually_waits():
+    """The burst test replaces `device.settle`, so nothing there runs this one.
+
+    Without this, a `settle` that raised, returned early, or lost its `time`
+    import would pass every other test in the file — the fakes would keep
+    counting calls to something that no longer waits.
+    """
+    import time as _time
+    from ek75.core import device
+
+    assert device.SETTLE_AFTER_BURST >= 0.1, (
+        "measured: 50 ms was still wrong 4 times in 8, 100 ms was clean")
+
+    start = _time.monotonic()
+    device.settle()
+    waited = _time.monotonic() - start
+    assert waited >= device.SETTLE_AFTER_BURST * 0.9, (
+        f"settle returned after {waited:.3f}s, expected "
+        f"{device.SETTLE_AFTER_BURST}s")
+
+
+def test_an_aborted_lighting_restore_still_settles():
+    """The same guarantee as the key-map burst, on the other burst producer.
+
+    Reviewed and found untested: `Explodes` only ever ran against
+    `restore_key_map`, so `restore`'s own `finally` was asserted by nothing.
+    """
+    from ek75.core import lighting
+
+    naps = []
+
+    class Explodes:
+        settle = staticmethod(lambda: naps.append(1))
+
+        @staticmethod
+        def command_process(fd, packet, **kw):
+            raise OSError("the device went away mid-burst")
+
+    real = lighting.device
+    session = lighting.Session.__new__(lighting.Session)
+    session.fd = None
+    try:
+        lighting.device = Explodes
+        try:
+            session.restore({1: {"effect": 1, "flag": 0, "speed": 0,
+                                 "colors": [(255, 0, 0)], "brightness": 100}})
+        except OSError:
+            pass
+        else:
+            raise AssertionError("the error should not have been swallowed")
+        assert len(naps) == 1, "an aborted lighting restore skipped the settle"
+
+        # A malformed entry raises before anything is sent, so there is no
+        # burst to recover from and no reason to wait 150 ms.
+        naps.clear()
+        try:
+            session.restore({1: {"colors": [(255, 0, 0)]}})   # no "effect"
+        except KeyError:
+            pass
+        else:
+            raise AssertionError("a missing key should have raised")
+        assert naps == [], "settled after sending nothing"
+
+        # The same on the key-map side, which is the case review named.
+        naps.clear()
+        try:
+            session.restore_key_map({(1, 0): {}})            # no "function_id"
+        except KeyError:
+            pass
+        else:
+            raise AssertionError("a missing key should have raised")
+        assert naps == [], "settled after sending nothing"
+    finally:
+        lighting.device = real
+
+
+def test_a_burst_leaves_the_link_quiet_exactly_once():
+    """A run of writes settles at the end, not per item, and not never.
+
+    Measured: writes always land, but while a burst is in flight a *read*
+    returns a coherent earlier state — 4/8 wrong at 0 ms and at 50 ms after a
+    24-command burst, 0/8 at 100 ms. See PROTOCOL.md, "Under sustained traffic,
+    reads trail the keyboard's real state".
+
+    Once, at the end: 166 x 150 ms per item would add 25 s to a key-map
+    restore. In a `finally`: a burst cut short by an exception is exactly when
+    the caller is most likely to read straight afterwards to find out what
+    happened. And not at all when nothing was sent, because there is then no
+    burst to recover from.
+    """
+    from ek75.core import device, lighting
+
+    naps = []
+
+    class Recorder:
+        SETTLE_AFTER_BURST = device.SETTLE_AFTER_BURST
+
+        @staticmethod
+        def settle():
+            naps.append(1)
+
+        @staticmethod
+        def command_process(fd, packet, **kw):
+            return packet
+
+    class Explodes(Recorder):
+        @staticmethod
+        def command_process(fd, packet, **kw):
+            raise OSError("the device went away mid-burst")
+
+    real = lighting.device
+    session = lighting.Session.__new__(lighting.Session)
+    session.fd = None
+    try:
+        lighting.device = Recorder
+        session.restore({1: {"effect": 1, "flag": 0, "speed": 0,
+                             "colors": [(255, 0, 0)], "brightness": 100},
+                         4: {"effect": 1, "flag": 0, "speed": 0,
+                             "colors": [(0, 255, 0)], "brightness": 200}})
+        assert len(naps) == 1, f"two regions settled {len(naps)} times"
+
+        naps.clear()
+        session.restore_key_map({(50, 1): {"function_id": 6,
+                                            "data": [0, 47, 0, 0, 0]},
+                                  (60, 0): {"function_id": 6,
+                                            "data": [0, 57, 0, 0, 0]}})
+        assert len(naps) == 1, f"two keys settled {len(naps)} times"
+
+        # Nothing sent means no burst to recover from.
+        naps.clear()
+        session.restore({})
+        session.restore_key_map({(99, 1): None})     # the only entry is skipped
+        assert naps == [], "settled without having sent anything"
+
+        # An exception mid-burst must still leave the link quiet.
+        naps.clear()
+        lighting.device = Explodes
+        try:
+            session.restore_key_map({(50, 1): {"function_id": 6,
+                                                "data": [0, 47, 0, 0, 0]}})
+        except OSError:
+            pass
+        else:
+            raise AssertionError("the error should not have been swallowed")
+        assert len(naps) == 1, "an aborted burst skipped the settle"
+    finally:
+        lighting.device = real
+
+
 def test_restore_keeps_an_empty_colour_list_instead_of_painting_it_black():
     """An empty colour list is the RGB/rainbow mode, not "no colour chosen".
 
@@ -860,6 +1009,8 @@ def test_restore_keeps_an_empty_colour_list_instead_of_painting_it_black():
     sent = []
 
     class Recorder:
+        settle = staticmethod(lambda: None)          # the burst's quiet period
+
         @staticmethod
         def command_process(fd, packet, **kw):
             sent.append(packet)
@@ -911,6 +1062,8 @@ def test_restore_key_map_reports_each_key_rather_than_one_verdict():
 
     class OneKeyRefuses:
         """Acknowledges everything except key 70, which never replies."""
+        settle = staticmethod(lambda: None)
+
         @staticmethod
         def command_process(fd, packet, **kw):
             key_id = packet[protocol.PAYLOAD_BASE + 0]

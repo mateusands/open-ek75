@@ -121,6 +121,33 @@ def open_device():
     return os.open(path, os.O_RDWR)
 
 
+# How long the link needs to be quiet after a run of commands before a read
+# reports the keyboard's real state.
+#
+# Writes are never lost — three bursts of 24 rapid alternating writes each ended
+# in the state last written. What trails is the *reading* side while a burst is
+# in flight. Measured after a 24-command burst, counting first reads that
+# returned an earlier state: 4/8 wrong at 0 ms, 4/8 at 50 ms, 0/8 at 100, 200
+# and 300 ms.
+#
+# 100 ms is the measurement — 8 trials, one unit, CLASS_LIGHTING. 150 ms is that
+# plus a margin, and the margin is a judgement call about variance rather than
+# something anyone measured. If another unit needs more, the symptom is a read
+# that trails and the number has exactly one home.
+SETTLE_AFTER_BURST = 0.15
+
+
+def settle():
+    """Leave the link quiet long enough for the keyboard to catch up.
+
+    Belongs here rather than in the service layer: how long this bus needs is a
+    property of the hardware link, which is what this module owns. Callers that
+    issue a run of commands call it; callers that issue one do not need to, an
+    isolated write followed by an immediate read having been correct 30/30.
+    """
+    time.sleep(SETTLE_AFTER_BURST)
+
+
 def get_multipacket(fd, profile_id, cmd_class, command, args=b"", width=1,
                      retries=20, delay=0.01):
     """Read a reply too large for one 64-byte report.

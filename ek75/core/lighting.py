@@ -205,6 +205,15 @@ class Session:
                                           profile_id=profile_id),
         ) is not None
 
+    def settle(self):
+        """Leave the link quiet so the next read is not one step behind.
+
+        Delegates: the duration is a property of the hardware link and lives in
+        `device`. Call this after issuing a run of commands — the two methods
+        below do — and not after a single one, which does not need it.
+        """
+        device.settle()
+
     def restore_key_map(self, key_map, profile_id=protocol.DEFAULT_PROFILE_ID):
         """Put a saved key map back. Returns [((key_id, layer), ok), ...].
 
@@ -218,20 +227,33 @@ class Session:
         is a real and destructive assignment rather than a missing one.
         """
         applied = []
-        for (key_id, layer), value in key_map.items():
-            if value is None:
-                continue
-            ok = self.write_key_assign(key_id, layer, value["function_id"],
-                                       value["data"], profile_id=profile_id)
-            applied.append(((key_id, layer), ok))
+        sent = 0
+        try:
+            for (key_id, layer), value in key_map.items():
+                if value is None:
+                    continue
+                function_id, data = value["function_id"], value["data"]
+                sent += 1                          # recorded next to the write,
+                ok = self.write_key_assign(        # after the entry is unpacked
+                    key_id, layer, function_id, data, profile_id=profile_id)
+                applied.append(((key_id, layer), ok))
+        finally:
+            # In a `finally` because a burst cut short by an exception is
+            # exactly when the caller reads straight afterwards to find out what
+            # happened. Once, not per key: 166 settles would add 25 s. Counted
+            # on writes begun rather than acknowledged — see `restore` for why
+            # that test is deliberately the conservative one.
+            if sent:
+                self.settle()
         return applied
 
     def restore(self, regions):
         """Re-apply a snapshot: effect, colours, flag, speed AND brightness.
 
-        Note that a read issued immediately after these writes can report the
-        *previous* state — see PROTOCOL.md, "A read right after a write can be
-        stale". Verifying a restore means waiting, not just reading.
+        Every write here lands — that was tested directly. What trails is a
+        *read* issued while the burst is still in flight, which is why this
+        method ends with a settle; see PROTOCOL.md, "Under sustained traffic,
+        reads trail the keyboard's real state".
 
         Brightness is part of the state and has to be part of the way back.
         Leaving it out made `restore` look like it worked while the region came
@@ -243,6 +265,24 @@ class Session:
         a success.
         """
         applied = []
+        sent = []
+        try:
+            self._restore_regions(regions, applied, sent)
+        finally:
+            # `sent`, not `applied`: a write that raised may still have put
+            # bytes on the wire, because command_process sends before it polls.
+            # From here that is not knowable — the exception could equally have
+            # come from building the packet — so the test is deliberately the
+            # conservative one, "did we begin a write". Settling when we did not
+            # need to costs 150 ms once; not settling when we did risks handing
+            # the caller an earlier state, and an aborted burst is exactly when
+            # the caller reads next to find out what happened.
+            if sent:
+                self.settle()
+        return applied
+
+    def _restore_regions(self, regions, applied, sent):
+        """The write loop itself, so `restore` is only the burst's bookkeeping."""
         for region, info in regions.items():
             # `[]` is the RGB/rainbow mode and must survive the round trip. The
             # old `info["colors"] or [(0, 0, 0)]` treated it as "nothing chosen"
@@ -255,11 +295,12 @@ class Session:
             colors = info["colors"]
             if not colors and colors != []:
                 colors = [(0, 0, 0)]
-            ok = self.set_effect(region, info["effect"], colors,
-                                 flag=info.get("flag", 0),
-                                 speed=info.get("speed", 0))
+            effect = info["effect"]                # unpacked before `sent`, so a
+            flag = info.get("flag", 0)             # malformed entry raises with
+            speed = info.get("speed", 0)           # nothing sent and no settle
+            sent.append(region)                # recorded next to the write
+            ok = self.set_effect(region, effect, colors, flag=flag, speed=speed)
             brightness = info.get("brightness")
             if ok and brightness is not None:
                 ok = self.set_brightness(region, brightness)
             applied.append((region, ok))
-        return applied
