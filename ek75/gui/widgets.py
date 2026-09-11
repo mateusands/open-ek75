@@ -395,3 +395,116 @@ class Card(ttk.Frame):
                   background=theme.BG_PANEL).pack(anchor="w", pady=(0, 8))
         self.body = ttk.Frame(self, style="Panel.TFrame")
         self.body.pack(fill="both", expand=True)
+
+
+class ColorSlots(ttk.Frame):
+    """The colour list for effects that actually use more than one.
+
+    `Breathing` was watched doing it — one colour per breath, in order, looping.
+    `Starlit` is on the vendor's list for it and has not been looked at here.
+    `Static` and `Wave` were watched drawing `colors[0]` and ignoring the rest,
+    so this row stays hidden for them and the single `ColorPicker` is the whole
+    control. How many slots each effect gets is `protocol.max_colors_for`; see
+    PROTOCOL.md, "The colour list is used by some effects, over time".
+
+    One chip per colour, click to pick which one the `ColorPicker` edits. The
+    list never empties: an effect with no colours at all is RGB mode, which is a
+    different thing reached by the picker itself, not by deleting chips.
+    """
+
+    CHIP = 26
+
+    def __init__(self, master, on_change, on_select):
+        super().__init__(master)
+        self._on_change = on_change
+        self._on_select = on_select
+        self._colors = [(255, 0, 0)]
+        self._index = 0
+        self._limit = 1
+        self._chips = ttk.Frame(self)
+        self._chips.pack(side="left")
+        self._add = tk.Label(self, text="+", bg=theme.BG_RAISED, fg=theme.FG,
+                             font=theme.FONT, width=2, cursor="hand2")
+        self._add.bind("<Button-1>", lambda _e: self._append())
+        self._add.pack(side="left", padx=(6, 0))
+        self._remove = tk.Label(self, text="−", bg=theme.BG_RAISED, fg=theme.FG,
+                                font=theme.FONT, width=2, cursor="hand2")
+        self._remove.bind("<Button-1>", lambda _e: self._drop())
+        self._remove.pack(side="left", padx=(4, 0))
+
+    # --- state ---------------------------------------------------------------
+
+    def configure_limit(self, limit):
+        """Set the cap. Truncates silently and does NOT notify.
+
+        It is called while syncing the UI to a newly selected effect, and
+        `_on_change` reaches the device: firing it here turned choosing an
+        effect into two writes, the second one undoing part of the first.
+        A caller that needs the truncated list sends it itself.
+        """
+        self._limit = max(1, limit)
+        if len(self._colors) > self._limit:
+            self._colors = self._colors[:self._limit]
+            self._index = min(self._index, len(self._colors) - 1)
+        self._redraw()
+
+    def set_colors(self, colors):
+        """Adopt a list read from the device. Empty means RGB mode, which this
+        row cannot represent — it keeps one editable chip so the picker has
+        something to edit, and the page decides what to send."""
+        self._colors = [tuple(c) for c in colors][:self._limit] or [(255, 0, 0)]
+        self._index = 0
+        self._redraw()
+
+    def colors(self):
+        return list(self._colors)
+
+    def selected_index(self):
+        return self._index
+
+    def set_selected_color(self, rgb):
+        self._colors[self._index] = tuple(rgb)
+        self._redraw()
+        self._on_change(list(self._colors))
+
+    # --- interaction ---------------------------------------------------------
+
+    def _append(self):
+        if len(self._colors) >= self._limit:
+            return
+        self._colors.append(self._colors[self._index])
+        self._index = len(self._colors) - 1
+        self._redraw()
+        self._on_change(list(self._colors))
+        self._on_select(self._colors[self._index])
+
+    def _drop(self):
+        if len(self._colors) <= 1:
+            return                      # never empty: see the class docstring
+        del self._colors[self._index]
+        self._index = min(self._index, len(self._colors) - 1)
+        self._redraw()
+        self._on_change(list(self._colors))
+        self._on_select(self._colors[self._index])
+
+    def _pick(self, index):
+        self._index = index
+        self._redraw()
+        self._on_select(self._colors[index])
+
+    def _redraw(self):
+        for child in self._chips.winfo_children():
+            child.destroy()
+        for i, rgb in enumerate(self._colors):
+            chip = tk.Label(self._chips, bg=theme.hex_color(rgb), width=3,
+                            cursor="hand2",
+                            relief="solid" if i == self._index else "flat",
+                            bd=2 if i == self._index else 0,
+                            highlightbackground=theme.ACCENT,
+                            highlightthickness=2 if i == self._index else 0)
+            chip.pack(side="left", padx=2, ipady=4)
+            chip.bind("<Button-1>", lambda _e, n=i: self._pick(n))
+        full = len(self._colors) >= self._limit
+        self._add.configure(fg=theme.FG_MUTED if full else theme.FG)
+        self._remove.configure(
+            fg=theme.FG_MUTED if len(self._colors) <= 1 else theme.FG)

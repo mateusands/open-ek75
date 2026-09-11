@@ -202,6 +202,47 @@ def direction_axis(effect):
 MAX_COLORS = 5
 
 
+# --- how many colours an effect actually uses --------------------------------
+# From `OEMDriver.Pages.PageLedTg::CheckCustomColorCount` in the vendor's Windows
+# app, which reduces to: effects 1, 4, 9, 20, 21, 22 and 132 take one colour;
+# Starlit (11) and Breathing (2) take more; everything else takes one. The Ws, Qf
+# and Jm pages carry the identical method, so it is a framework-wide rule.
+#
+# It agrees with what this keyboard was seen doing, three times over: Static one
+# colour, Wave one colour (the table's default branch), Breathing cycling red,
+# green and blue in order, one per breath. The table was found after those
+# observations rather than used to predict them.
+#
+# Each number is the largest one something can vouch for, and they do not come
+# from the same place:
+#
+#   Breathing  3  watched on this keyboard cycling red, green, blue in order.
+#                 The vendor's UI caps it at 2; the firmware plainly does more,
+#                 so the 2 is the application's limit. 4 and 5 are NOT offered:
+#                 the wire allows them and nobody has seen them, and offering a
+#                 slot that may do nothing is the thing this project does not do.
+#   Starlit    2  the vendor's number, and nothing else. Nobody has looked at
+#                 this effect on hardware. It got MAX_COLORS in an earlier draft
+#                 purely by sharing a branch with Breathing in the vendor's
+#                 table, which is not evidence about Starlit at all.
+#   everything 1  the table's default branch, and what Static and Wave were
+#                 seen doing.
+COLORS_PER_EFFECT = {
+    EFFECT_BREATHING: 3,
+    EFFECT_STARLIT: 2,
+}
+
+
+def max_colors_for(effect):
+    """How many colours this effect will actually show. See PROTOCOL.md.
+
+    Never more than something can vouch for: an unclassified effect gets 1,
+    which is the answer that cannot mislead.
+    """
+    return min(COLORS_PER_EFFECT.get(effect, 1), MAX_COLORS)
+
+
+
 # --- speed --------------------------------------------------------------------
 # Not 0-255. The official software's speed slider is declared Minimum="1"
 # Maximum="3" in its own XAML (PageLedRegionTg's compiled BAML), matching the
@@ -262,15 +303,15 @@ def build_set_lighting_effect(region_id, effect, colors, flag=0, speed=0,
     `colors` is a list of (r, g, b) tuples, at most MAX_COLORS of them, and the
     count goes in byte PAYLOAD_BASE+4.
 
-    **`Static` and `Wave` draw only `colors[0]` on this model.** The list is
-    stored and read back byte-identical (`Static` with 2, 3 and 5 colours;
-    `Wave`, `Breathing` and `RainbowW` with fewer), and the two that were looked
-    at rendered the first colour alone. Region 1 reports 18 effects and two
-    were checked, so the rest is likely rather than confirmed — see PROTOCOL.md
-    for which ones are worth the remaining look. The list and the cap stay because they
-    are the wire format — the vendor's own app refuses a sixth — and because a
-    sibling PID with several lit zones may use the rest. See PROTOCOL.md, "The
-    colour list past the first entry is stored and never drawn".
+    **How many of them get drawn depends on the effect** — `max_colors_for()`
+    is the rule, and PROTOCOL.md's "The colour list is used by some effects,
+    over time" is the evidence. `Breathing` cycles the whole list, one colour
+    per breath; `Static` and `Wave` draw `colors[0]` and ignore the rest.
+
+    This builder does not apply that rule. It puts on the wire exactly what it
+    is handed, capped at MAX_COLORS, because the packet is the vendor's format
+    and a sibling PID may spend the list differently. Deciding how many to
+    offer belongs to the caller.
 
     `flag` is the animation direction (DIRECTION_FORWARD/DIRECTION_REVERSE) for
     the effects that have one — see EFFECT_DIRECTION_AXIS. It is 0 for

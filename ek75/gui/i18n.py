@@ -75,6 +75,9 @@ STRINGS = {
         "backup_saved": "Backed up to {path}",
         "backup_failed": "Backup failed: {error}",
         "restored": "Restored from {path}",
+        "color_list_note": ("This effect cycles the list, in order — Breathing "
+                             "shows one colour per breath.\nClick a swatch to "
+                             "edit it."),
         "macros_blurb": ("Read-only. What this keyboard reports it has stored — "
                           "the vendor's\ndevice profile does not mention macros "
                           "at all, so this is the only\nplace the answer comes "
@@ -269,6 +272,9 @@ STRINGS = {
         "backup_saved": "Backup salvo em {path}",
         "backup_failed": "Falha no backup: {error}",
         "restored": "Restaurado de {path}",
+        "color_list_note": ("Este efeito percorre a lista, em ordem — o Breathing "
+                             "mostra uma cor por respirada.\nClique num "
+                             "quadradinho para editá-lo."),
         "macros_blurb": ("Somente leitura. O que este teclado reporta ter "
                           "guardado — o perfil de\ndispositivo do fabricante nem "
                           "menciona macros, então esta é a única\nfonte da "

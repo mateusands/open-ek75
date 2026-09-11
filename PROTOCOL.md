@@ -873,63 +873,60 @@ For `Speed` the range had already been settled without writing anything, by
 watching the firmware walk its own value under `Fn`+`←`/`→` (see "`Speed` is
 1-3"). That proved which numbers are legal. This proves they do something.
 
-### The colour list past the first entry is stored and never drawn
+### The colour list is used by some effects, over time — not across the keys
 
-**Confirmed negative, twice, on two different kinds of effect.** The firmware
-accepts and stores the list exactly as sent. What was actually run, spelled out
-rather than summarised, because a summary of it was wrong in an earlier draft
-of this section:
+This section said the opposite for one commit, and the way it was wrong is the
+useful part.
 
-| Effect | Colours sent | Read back |
+**First conclusion, from looking at two effects:** `Static` with red+green+blue
+showed all red, and `Wave` with the same three showed all red sweeping. Both
+were read back byte-identical first, so the firmware was storing the list and
+appeared to be drawing only `colors[0]`. It was written up as a confirmed
+negative, scoped to those two effects — and review pointed out the hole: an
+effect cycling the list **over time** would look like one colour in any single
+glance. That was the right question and the answer is yes.
+
+**`Breathing` cycles the list.** Two colours alternate between breaths; three
+go red, green, blue and repeat. Watched over several cycles rather than glanced
+at, which is the only way this is visible.
+
+So the list is not decoration and the distinction is not spatial-versus-nothing,
+it is **which effect**:
+
+| Effect | Colours drawn | How |
 |---|---|---|
-| `Static` (1) | 2, then 3, then 5 | identical each time |
-| `Wave` (5) | 3 | identical |
-| `Breathing` (2) | 2 | identical |
-| `RainbowW` (20) | 2 | identical |
+| `Breathing` (2) | the whole list | one per breath, in order, looping |
+| `Static` (1) | `colors[0]` only | nothing to animate |
+| `Wave` (5) | `colors[0]` only | the sweep is one colour |
 
-Then a human looked:
+### The vendor has a table for this, and it agrees
 
-| Sent to region 1 | Read back | Seen on the keys |
-|---|---|---|
-| `Static`, red + green + blue | all three | **all red** |
-| `Wave`, red + green + blue | all three | **all red**, one colour sweeping |
+`OEMDriver.Pages.PageLedTg::CheckCustomColorCount(effect, count)` in the Windows
+app — the `Tg` page is this chip family's — reduces to:
 
-`Static` alone would have proved little — a "static" effect ignoring a list is
-easy to explain away, and that is why the test was repeated. `Wave` is animated
-and is exactly where a gradient or colour bands would be unmistakable, and it
-showed one colour too.
+    effect in (1, 4, 9, 20, 21, 22, 132)  ->  1
+    effect == 11 (Starlit)                ->  at most 2
+    effect == 2  (Breathing)              ->  at most 2
+    anything else                         ->  1
 
-**The exact scope of the claim, because two effects are not eighteen.** Region 1
-reports 18 effects and two of them were looked at. What is confirmed is that
-`Static` and `Wave` draw `colors[0]` alone. What is *likely*, and not confirmed,
-is that the rest behave the same: the vendor's factory profile for this model
-ships a single colour, its app caps the list at five for the whole product line
-rather than for this PID, and the framework covers mice with several separately
-lit zones — which is a much better fit for what a colour *list* is for than a
-one-zone key matrix is.
+`PageLedWs`, `PageLedQf` and `PageLedJm` carry the identical method, so it is a
+framework-wide rule rather than something special to this model.
 
-There is also a rendering mode this test would not have caught. Both effects
-looked at would show several colours **spatially** — bands across the keys — and
-that is what "only red" rules out. An effect that cycled the list **over time**,
-showing one colour then the next, would look like a single colour in any given
-glance. `Breathing` is the obvious candidate for that and it was stored but not
-looked at.
+It predicts every observation above without having been consulted first:
+`Static` 1 (listed), `Wave` 1 (the default branch), `Breathing` more than 1.
+Three agreements between a table read out of a binary and a human looking at a
+keyboard. `Starlit` (11) is the table's other multi-colour effect and has not
+been looked at.
 
-So, to close this properly: the effects whose names suggest several colours at
-once — `SteadyStream` (22), `LightWave` (21), `Fluxay` (29), `RainbowW` (20) —
-and `Breathing` (2) watched for **several seconds** rather than glanced at. The
-test is the one run here: three unmistakable colours, brightness up, and look.
+**Where they disagree: the firmware is more capable than the vendor's UI.** The
+app caps `Breathing` at two colours. This keyboard cycled three, in order. The
+cap is the application's, not the hardware's — the same shape as `MAX_COLORS`
+being the app's refusal to send a sixth rather than a firmware limit.
 
-Same shape as `Flag` below, and found the same way: the read-back said yes and
-the keyboard said no. `MAX_COLORS = 5` stays in `protocol.py` because it is a
-true fact about the **wire format** — the vendor's own Windows app refuses to
-send a sixth — but it is not a feature of this model.
-
-**Do not build a multi-colour picker for this PID** on the strength of what is
-known today. `ek75/gui/` offers one colour, which is what this hardware has been
-seen to show. A sibling product in the family
-(the framework covers mice with several lit zones) may well use the rest of the
-list, which is why the builder still takes a list and still enforces the cap.
+`ek75/core/protocol.max_colors_for()` encodes the vendor's table because it is
+the only per-effect rule anyone has, and the GUI offers a colour list only for
+the effects on it. Where the firmware turns out to allow more, that is recorded
+here rather than assumed for effects nobody has watched.
 
 ### ...but `Flag` does not visibly do anything on this model
 
@@ -1484,45 +1481,61 @@ empty or cloned, or what `DELETE` does to the one that is active. Sending them
 would be guessing four answers at once with "the keyboard stops typing" as the
 failure mode.
 
-### So what is "Profile 1 / 2 / 3" in the Windows app?
+### "Profile 1 / 2 / 3" in the Windows app is a list on the PC — settled
 
-Probably **not** device profiles, and the reasoning is worth keeping separable
-from the certainty:
+This was left as "probably" and flagged as the one piece of work that would turn
+it into an answer: the Windows app is a *second, independent* implementation and
+could create device profiles through its own HID layer. It was checked, and it
+does not.
 
-- the web driver never creates one, as above;
-- `Products/TK51G0101.dll` embeds `DefaultProfile.xml` as a **resource** — the
-  app carries at least one profile as XML on the PC, and that file's contents
-  are the factory lighting state this project independently read off the
-  hardware (see "`DefaultProfile.xml`").
+`Central de Controle Husky.exe`, `DeviceBase.dll` and `Products/TK51G0101.dll`
+were walked instruction by instruction (`dnfile` + `dncil`), resolving the
+operand of every `call`/`callvirt` so the question is about edges rather than
+about names appearing in metadata:
 
-**The gap in this, stated plainly: the Windows app is a *second, independent*
-implementation of this protocol** (see "A second vendor source"). It is not
-bound by what the web driver does, and it could create device profiles through
-its own HID layer without any of the above being false. Nobody has looked at
-that half.
+- **`DareuProducts.DeviceBase::CreateProfile` is `ldnull; ret`.** The base
+  implementation returns null and does nothing. It is a virtual stub.
+- **`DareuProducts.TK51G0101::CreateProfile`** — the override for *this exact
+  model* — is a local object factory:
 
-`DefaultProfile.xml` cuts both ways, too: an embedded profile resource is what a
-PC-side profile store looks like, and it is equally what a **template written
-into a newly created device profile** looks like. It is evidence that the app
-holds profile data; it is not evidence of where that data ends up. Checking it means finding whether the app's assemblies reference
-`PFL_CMD_CREATE`, and it is the one piece of work that would turn "probably"
-into an answer.
+      newobj .ctor
+      ldsfld s_profileDefault
+      callvirt CopyFunctionParam
 
-And `GetProfileConfig` says what a profile *is* from the driver's view:
+  It constructs a profile in memory and copies the embedded default into it.
+  There is no packet, no HID call, nothing that reaches the keyboard.
+  `s_profileDefault` is `DefaultProfile.xml`, the resource discussed above.
+- **`DeleteProfile` is not overridden for this product at all.**
+- The call sites are UI code: `OEMDriver.Pages.PageProfileConfig::
+  ProfileOperationCopy` and `ProfileOperationImport`, working on an
+  `ObscProfiles` observable collection through `get_Count` and `get_Name` — a
+  list bound to a window, not a device.
 
-    GetProfileConfig = GetKeysFunction + GetDpiParameters + GetLightingParameters
+So **both** vendor implementations agree, for different reasons: the web driver
+defines the three `CLASS_PROFILE` writes and calls none of them, and the Windows
+app's `CreateProfile` for this PID never leaves the PC. Profile 1/2/3 is an
+application-side list, seeded from the factory template, applied to the one
+device profile this keyboard has.
 
-For a keyboard, with no DPI: **the key map and the lighting.** Which is exactly
-what `open-ek75 backup` already records and `restore` already puts back, both
-confirmed on hardware.
+⚠️ **On trusting this kind of negative.** The first version of the script that
+produced it found no call sites for *anything*, including `ToString` — its
+reader did not implement dncil's interface and every failure was swallowed by a
+bare `except`. It was caught by running it against a name that had to be there.
+A tool that cannot find a positive cannot report a negative, and the control run
+is part of the evidence: 3383 method bodies read, 0 failed, 52 `ToString` call
+sites found.
 
 ### The safe way to ship this feature
 
 Named local profiles. Store several `backup`-format files, let the user pick
 one, apply it with the existing `restore` path. Zero new device writes, zero new
-packet shapes — and that holds regardless of how the question above turns out,
-which is the point. It does not need the vendor's app to work the same way; it
-only needs `backup` and `restore`, which are confirmed on this hardware.
+packet shapes — and now known to be **what the vendor's own app does**, rather
+than merely a safe substitute for it.
+
+`PFL_CMD_CREATE` stays unsent. Not out of caution about an unknown any more, but
+because nothing known uses it: two independent vendor implementations both
+decline to, and this keyboard reports one profile because that is how many it
+has.
 
 What it would NOT give: switching profiles with a key on the keyboard, which
 needs a real device profile and therefore `PFL_CMD_CREATE`. Nobody should send
@@ -1616,11 +1629,11 @@ coincidence; nothing here rests on it.)
 
 ## What is not implemented yet
 
-- **Multi-colour effects** — tried, and this model does not render them. The
-  list is stored faithfully and only `colors[0]` is drawn; see "The colour list
-  past the first entry is stored and never drawn". The builder still takes a
-  list and still caps it at five, because that is the wire format and a sibling
-  PID may use it.
+- **Multi-colour effects** — implemented for the effects that use them.
+  `Breathing` and `Starlit` take a list and the GUI offers one for them;
+  everything else draws `colors[0]` and gets a single picker. See "The colour
+  list is used by some effects, over time". What is still open is `Starlit`,
+  which nobody has looked at, and how far past three `Breathing` really walks.
 - **`Flag` (direction)** — resolved on paper by two independent vendor
   implementations, stored faithfully by the firmware, and **confirmed not to be
   rendered** on this model. The control stays visible in the GUI with a label
@@ -1707,12 +1720,22 @@ coincidence; nothing here rests on it.)
    stored value move proves the firmware accepts and keeps it, not that it
    renders it — the same gap that `Flag` turned out to fall into.
 
-4. ~~**Multi-colour effects**~~ — **done, and the answer is no.** The firmware
-   stores up to five colours faithfully and draws only the first, on a still
-   effect and on an animated one. See "The colour list past the first entry is
-   stored and never drawn" above. (This entry appeared twice in earlier
-   versions of this list, as items 4 and 5, asking the same question in two
-   wordings — both are answered.)
+4. ~~**Multi-colour effects**~~ — **done, and the answer depends on the
+   effect.** `Breathing` cycles the whole list, one colour per breath, in
+   order. `Static` and `Wave` draw only the first. The vendor's own per-effect
+   table agrees and names `Starlit` as the other multi-colour one. See "The
+   colour list is used by some effects, over time" above.
+
+   Two answers were written here before this one. The first said "not tried";
+   the second said "the answer is no", from looking at `Static` and `Wave` and
+   generalising. What the second one missed is that a list can be spent over
+   **time** rather than across the keys, which no single glance can see. It is
+   the most instructive wrong answer in this file.
+
+   **Still open:** `Starlit` (11) has not been looked at, and the vendor caps
+   both multi-colour effects at two while this firmware cycled three — so how
+   many `Breathing` really walks, up to the five the wire allows, is unmeasured
+   past three.
 5. If you have a **different PID** in this family (check its `FwType` at
    `https://dr.dareu.com/products/<PID>/<PID>.json` first — this exact
    `find_device()`/packet layout only applies to `FwType: 0`), the read path

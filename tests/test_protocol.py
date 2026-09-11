@@ -1313,7 +1313,47 @@ def test_a_backup_written_before_keys_existed_still_loads():
         assert state.load_keys(fresh) is None
 
 
-def test_a_colour_list_goes_on_the_wire_whole_even_though_only_the_first_shows():
+def test_how_many_colours_each_effect_actually_uses():
+    """Per-effect, from the vendor's own table — and it matches the hardware.
+
+    `OEMDriver.Pages.PageLedTg::CheckCustomColorCount` in the Windows app
+    reduces to: effects 1, 4, 9, 20, 21, 22 and 132 take one colour; `Starlit`
+    (11) and `Breathing` (2) take more; everything else takes one. The `Ws`,
+    `Qf` and `Jm` pages carry the identical method, so it is a framework rule
+    rather than this model's quirk.
+
+    Three independent agreements with what a human saw on this keyboard:
+    `Static` showed one colour (listed as 1), `Wave` showed one (the default
+    branch), and `Breathing` cycled red, green and blue in order (listed as
+    multi). The table was read out of the binary after those observations, not
+    used to predict them.
+
+    Each number is the largest one something can vouch for, and they do not
+    share a source. `Breathing` gets 3 because three were watched cycling; the
+    vendor's 2 is its UI's limit, not the firmware's. 4 and 5 are not offered,
+    because the wire allowing them is not evidence that they render.
+
+    `Starlit` gets the vendor's 2 and no more. An earlier draft gave it
+    MAX_COLORS purely because it shares a branch with `Breathing` in that table
+    — which says nothing about `Starlit`, which nobody has looked at. That is
+    the "inventing capability" this project exists to not do.
+    """
+    assert protocol.max_colors_for(protocol.EFFECT_BREATHING) == 3
+    assert protocol.max_colors_for(protocol.EFFECT_STARLIT) == 2
+    assert all(n <= protocol.MAX_COLORS
+               for n in protocol.COLORS_PER_EFFECT.values())
+
+    for single in (protocol.EFFECT_STATIC, protocol.EFFECT_REACTIVE,
+                   protocol.EFFECT_RUNNING_LIGHT, protocol.EFFECT_RAINBOW_W,
+                   protocol.EFFECT_LIGHT_WAVE, protocol.EFFECT_STEADY_STREAM,
+                   protocol.EFFECT_WAVE):
+        assert protocol.max_colors_for(single) == 1, f"effect {single}"
+
+    # An effect nobody has classified falls to the safe answer, not to five.
+    assert protocol.max_colors_for(200) == 1
+
+
+def test_the_packet_carries_every_colour_it_is_handed():
     """The packet carries every colour; the effects checked draw `colors[0]` alone.
 
     Both halves are asserted here because they are separate facts and the
@@ -1326,14 +1366,13 @@ def test_a_colour_list_goes_on_the_wire_whole_even_though_only_the_first_shows()
     explains itself away; an animated one is where bands or a gradient would be
     unmistakable, and it drew one colour too.
 
-    Two effects out of the eighteen region 1 reports, so this is confirmed for
-    `Static` and `Wave` and merely likely for the rest. The L3 half is narrower
-    than it sounds too: `Static` was sent 2, 3 and 5 colours, the other three
-    effects fewer.
+    Confirmed for `Static` and `Wave` only, and NOT true in general — see
+    `test_how_many_colours_each_effect_actually_uses` above. `Breathing` draws
+    the whole list, one colour per breath, which is what an earlier version of
+    this docstring got wrong by generalising from two effects.
 
-    So the builder must keep putting the whole list on the wire — the format is
-    the vendor's and a sibling PID may render it — while nothing in this project
-    may offer a multi-colour control for this model. Same distinction as `Flag`.
+    This test is about the packet, which must carry every colour regardless of
+    what any one effect does with them.
     """
     packet = protocol.build_set_lighting_effect(
         1, protocol.EFFECT_STATIC,
