@@ -1423,8 +1423,15 @@ def test_a_profile_name_is_rejected_rather_than_repaired():
     from ek75.core import profiles
 
     for good in ("Game", "perfil jogo", "Perfil Jogo", "work_2",
-                 "a-b", "Ação", "1"):
-        assert profiles.clean_name(good) == good.strip(), good
+                 "a-b", "Ação", "1", "game-"):
+        assert profiles.clean_name(good) == good, good
+
+    # Surrounding whitespace is the one repair, and it is deliberate: it gives
+    # the file the user meant, where raising would be an error about characters
+    # they cannot see. Padded forms must reach the SAME profile, not a second
+    # one that merely looks identical in a list.
+    assert profiles.clean_name("  Game  ") == "Game"
+    assert profiles.clean_name("Game\t") == "Game"
 
     for bad, why in ((".."           , "the parent directory"),
                      ("."            , "the current directory"),
@@ -1474,6 +1481,16 @@ def test_a_profile_is_a_backup_and_an_old_backup_is_a_profile():
 
         profiles.delete("B", directory=tmp)
         assert profiles.list_profiles(tmp) == ["Perfil Jogo"]
+
+        # The claim in the other direction, which nothing asserted: a file
+        # written by `backup` is a profile. Dropped straight into the directory
+        # by the plain `state.save`, it must list and load like any other.
+        state.save(os.path.join(tmp, "From A Backup.json"), regions, keys=keys)
+        assert "From A Backup" in profiles.list_profiles(tmp)
+        loaded = profiles.path_for("From A Backup", directory=tmp)
+        assert state.load(loaded) == regions
+        assert state.load_keys(loaded) == keys
+        profiles.delete("From A Backup", directory=tmp)
 
         # Deleting what is not there is an error, not a quiet success: a caller
         # that mistyped a name must not be told it worked.

@@ -26,11 +26,16 @@ MAX_NAME = 64
 
 
 def clean_name(name):
-    """Return the name, or raise ValueError. Never repairs one.
+    """Return the name, or raise ValueError.
 
-    Repairing is the dangerous option: turning `../../.bashrc` into `.bashrc`
-    writes a file the user did not ask for and says nothing about it. A name
-    that cannot be used is an error the caller can show.
+    **Surrounding whitespace is trimmed. Nothing else is ever repaired.** The
+    line between those is whether the repair changes *which file you get*:
+    turning `../../.bashrc` into `.bashrc` writes something the user did not
+    ask for and says nothing about it, so it raises. Trimming `" Game "` to
+    `"Game"` gives the file the user meant, and the alternative is an error
+    about characters they cannot see. An earlier version of this docstring
+    claimed nothing was repaired, which the `.strip()` below already
+    contradicted.
 
     The rules, and the reason each exists:
 
