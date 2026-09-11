@@ -151,6 +151,29 @@ class Session:
             return None
         return protocol.parse_time_to_sleep_response(resp)
 
+    def read_profiles(self):
+        """Which profiles the keyboard holds, and which one is active.
+
+        Returns {"ids": [...] or None, "active": int or None}. Each field is
+        None when that specific read went unanswered — the two are separate
+        commands and one can fail while the other succeeds. None is never
+        replaced by a plausible default: "profile 1, obviously" is exactly the
+        assumption this read exists to check, and the vendor's own device
+        profile has already been caught being wrong about this hardware 23
+        times over.
+
+        Read-only. Creating, deleting and switching profiles are writes and are
+        not implemented — see PROTOCOL.md's CLASS_PROFILE section.
+        """
+        data = device.get_multipacket(
+            self.fd, 0, protocol.CLASS_PROFILE, protocol.PFL_CMD_ID_LIST)
+        ids = protocol.parse_profile_id_list(data) if data is not None else None
+
+        resp = device.command_process(self.fd, protocol.build_get_active_profile())
+        active = (protocol.parse_active_profile_response(resp)
+                  if resp is not None else None)
+        return {"ids": ids, "active": active}
+
     # --- writes --------------------------------------------------------------
 
     def set_effect(self, region_id, effect, colors, flag=0, speed=0):

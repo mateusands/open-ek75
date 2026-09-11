@@ -753,6 +753,124 @@ def test_function_id_47_is_named_because_the_keyboard_emits_it():
                                                      "Travar a tecla Windows")
 
 
+# --- CLASS_PROFILE (5), read-only -------------------------------------------
+
+def test_get_profile_id_list_probe():
+    """Port of tgdevice.js `GetProfileIdList`, which is a GetMultiPacketCmd probe.
+
+    The vendor calls `GetMultiPacketCmd(0, CLASS_PROFILE, PFL_CMD_ID_LIST|GET,
+    null, out)` — ProfileId 0, exactly like `GetLedRegionIdList`, and no
+    arguments. GetMultiPacketCmd's probe writes HDR_SIZE=1.
+
+    Expected bytes read off the vendor source, not off the builder:
+      00 status | 01 size | 05 class | 80 cmd (0 | GET) | 00 profile
+    """
+    expected = _padded(bytes.fromhex("0001058000"))
+    assert protocol.build_get_profile_id_list_probe() == expected
+
+
+def test_profile_id_list_is_not_filtered_like_the_led_region_list():
+    """The two id lists look alike and are decoded differently. On purpose.
+
+    `GetLedRegionIdList` post-processes its byte array, collapsing ids 0 and 1
+    into whichever appears first. `GetProfileIdList` does
+    `ProfileList = new Uint8Array(DataArray)` and filters nothing at all.
+
+    Writing the profile parser by analogy with its sibling — the obvious move,
+    since both are multi-packet id lists — would silently swallow a profile.
+    This asserts the difference on one shared input rather than describing it.
+    """
+    both = bytes([0, 1, 4])
+    assert protocol.parse_led_region_id_list(both) == [0, 4]     # filtered
+    assert protocol.parse_profile_id_list(both) == [0, 1, 4]     # not filtered
+
+    assert protocol.parse_profile_id_list(bytes([1])) == [1]
+    assert protocol.parse_profile_id_list(b"") == []
+
+
+def test_get_active_profile_writes_neither_a_size_nor_a_profile():
+    """`GetActiveProfileId` sets HDR_SIZE=0 and never touches HDR_PROFILE.
+
+    Both zeros are load-bearing and neither is an accident of the vendor's code:
+    asking *which* profile is active cannot take a profile id as input, and the
+    request carries no payload for HDR_SIZE to describe.
+
+    HDR_SIZE=0 is NOT shared with `build_get_battery_status`, the other
+    profile-less read in this file — that one sets HDR_SIZE=3. The two are
+    alike in the profile byte only, which is the kind of half-resemblance that
+    gets a 3 written here by analogy.
+
+    Expected bytes read off the vendor source:
+      00 status | 00 size | 05 class | 83 cmd (3 | GET) | 00 profile
+    """
+    expected = _padded(bytes.fromhex("0000058300"))
+    got = protocol.build_get_active_profile()
+    assert got == expected
+    assert got[protocol.HDR_SIZE] == 0
+    assert got[protocol.HDR_PROFILE] == 0
+    assert protocol.build_get_battery_status()[protocol.HDR_SIZE] == 3
+
+
+def test_active_profile_comes_back_in_the_header_not_the_payload():
+    """`A.ProfileId = A.Data[DATA_INDEX.HDR_PROFILE]` — byte 4, not PAYLOAD_BASE.
+
+    Every other parser in this file reads from PAYLOAD_BASE, so this is the one
+    place where copying a sibling's shape gives the wrong byte. The test pins
+    the distinction by putting a different value in each position: a parser that
+    read the payload would return 7.
+
+    The packet is synthetic on purpose, and that is worth stating plainly. The
+    real reply from this keyboard was `02 00 05 83 01 00 01 00...` — the id in
+    byte 4 and byte 6 both — so the hardware available here cannot distinguish
+    the two readings and does not confirm the header. Only the vendor driver
+    does. This test locks in the vendor's choice; it does not prove it.
+    """
+    resp = _padded(bytes([0x02, 0x00, 0x05, 0x83, 0x01, 0x00, 0x07]))
+    assert protocol.parse_active_profile_response(resp) == 1
+
+
+def test_read_profiles_reports_nothing_rather_than_a_plausible_default():
+    """A timeout must surface as None, per field, not as "profile 1, obviously".
+
+    The two reads are separate commands and either can fail alone, so the
+    result carries two independent Nones. Defaulting to 1 would make the very
+    assumption this read exists to test — and this project has already been
+    caught believing the vendor's idea of the hardware over the hardware.
+
+    An *empty* id list is not a failure: `get_multipacket` returns b"" when the
+    device answers "zero bytes follow", so `ids` is [] and not None. The two
+    outcomes mean different things and the test pins both.
+    """
+    from ek75.core import lighting
+
+    class Silent:
+        """Every read times out, which `device` reports as None."""
+        @staticmethod
+        def get_multipacket(*a, **k):
+            return None
+
+        @staticmethod
+        def command_process(*a, **k):
+            return None
+
+    class AnswersEmpty(Silent):
+        @staticmethod
+        def get_multipacket(*a, **k):
+            return b""
+
+    real = lighting.device
+    try:
+        lighting.device = Silent
+        session = lighting.Session.__new__(lighting.Session)
+        session.fd = None
+        assert session.read_profiles() == {"ids": None, "active": None}
+
+        lighting.device = AnswersEmpty
+        assert session.read_profiles() == {"ids": [], "active": None}
+    finally:
+        lighting.device = real
+
+
 def test_speed_range_matches_what_the_firmware_produces():
     """1-3, and this is the strong tier of evidence, not the XAML one.
 

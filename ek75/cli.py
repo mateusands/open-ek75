@@ -146,6 +146,21 @@ def cmd_probe(args):
             print("sleep:   " + (f"{sleep['minutes']} min ({sleep['seconds']} s)"
                                   if sleep["enabled"] else "disabled"))
 
+        profiles = session.read_profiles()
+        listed = ("no reply" if profiles["ids"] is None
+                  else profiles["ids"] or "none reported")
+        active = "no reply" if profiles["active"] is None else profiles["active"]
+        print(f"profiles: {listed}   active: {active}")
+        if profiles["ids"] is not None and len(profiles["ids"]) == 1:
+            # The official Windows app offers Profile 1/2/3. Where a keyboard
+            # lists one, the other slots do not exist yet — they are created by
+            # PFL_CMD_CREATE, a persistent write this project does not send.
+            # Exactly one, not "fewer than two": an empty list is a different
+            # and stranger answer, and this line would contradict the "none
+            # reported" printed directly above it.
+            print("          (only one profile exists; the extra slots the "
+                  "vendor app shows must be created first)")
+
         ids, source = session.region_ids()
         print(f"regions: {ids}   (source: {source})")
         for region in ids:

@@ -630,3 +630,87 @@ def parse_key_assign_response(resp):
         "data": list(resp[PAYLOAD_BASE + 3:PAYLOAD_BASE + 8]),
     }
 
+
+
+# --- CLASS_PROFILE subcommands (tgdevice.js: CLASS_PROFILE_CMD_LIST) --------
+PFL_CMD_ID_LIST = 0                    # implemented (read)
+PFL_CMD_CREATE = 1                     # write, persistent, untested undo
+PFL_CMD_DELETE = 2                     # the undo for CREATE, itself untested
+PFL_CMD_ACTIVE = 3                     # implemented (read); the SET is not
+PFL_CMD_NAME = 4                       # no GetProfileName found in the source
+PFL_CMD_RESET = 5                      # write, destroys a profile's contents
+
+
+def build_get_profile_id_list_probe(profile_id=0):
+    """Port of tgdevice.js `GetProfileIdList` — a GetMultiPacketCmd probe.
+
+    The vendor passes ProfileId 0, the same as `GetLedRegionIdList`: asking the
+    keyboard which profiles exist is not a question about one of them.
+
+    Only the probe is built here. `device.get_multipacket` derives the chunk
+    requests from the same (profile_id, class, command) triple, which is why
+    this is named `_probe` and its LED sibling is too.
+
+    CONFIRMED ON HARDWARE: returns [1] on this keyboard — one profile, which is
+    also the active one. The vendor's Windows app offers Profile 1/2/3; the
+    other two have to be created with PFL_CMD_CREATE, which this project does
+    not send.
+    """
+    return build_multipacket_probe(profile_id, CLASS_PROFILE, PFL_CMD_ID_LIST)
+
+
+def parse_profile_id_list(data):
+    """The assembled byte array *is* the list — no filtering, deliberately.
+
+    `GetProfileIdList` ends with `ProfileList = new Uint8Array(DataArray)` and
+    nothing else. Its sibling `parse_led_region_id_list` collapses ids 0 and 1;
+    that is the LED list's own quirk and copying it here would silently swallow
+    a profile. The two are tested against one shared input so the difference is
+    asserted rather than trusted to this comment.
+
+    This function exists for the layer rule rather than for the work: callers in
+    `lighting.py` must not unpack raw bytes themselves.
+    """
+    return list(data)
+
+
+def build_get_active_profile():
+    """PFL_CMD_ACTIVE|GET_CMD — port of tgdevice.js `GetActiveProfileId`.
+
+    Writes HDR_STATUS, HDR_CLASS and HDR_COMMAND, leaving **both** HDR_SIZE and
+    HDR_PROFILE at 0. Neither zero is incidental: the request carries no payload
+    for HDR_SIZE to describe, and asking *which* profile is active cannot take a
+    profile id as its input.
+
+    The zero profile byte is shared with `build_get_battery_status`; the zero
+    size is not — that one sets HDR_SIZE=3. Half a resemblance.
+
+    Confirmed on hardware: this keyboard accepted the packet and replied ready
+    with `02 00 05 83 01 00 01 00...`, reporting profile 1 as active. That
+    confirms the *request*. It does not confirm where the answer lives — see
+    `parse_active_profile_response`, which this unit cannot discriminate.
+    """
+    pkt = _new_packet()
+    pkt[HDR_STATUS] = TARGET_ID
+    pkt[HDR_SIZE] = 0
+    pkt[HDR_CLASS] = CLASS_PROFILE
+    pkt[HDR_COMMAND] = PFL_CMD_ACTIVE | GET_CMD
+    return bytes(pkt)
+
+
+def parse_active_profile_response(resp):
+    """The active profile id, read from the reply's **header**.
+
+    `A.ProfileId = A.Data[DATA_INDEX.HDR_PROFILE]` — byte 4, where the request
+    would have carried a profile id had it sent one. Every other parser in this
+    module reads from PAYLOAD_BASE, so this is the one place where following a
+    sibling's shape yields the wrong byte.
+
+    Read on hardware, the reply was `02 00 05 83 01 00 01 00...`: this keyboard
+    puts the id in byte 4 **and** byte 6, so it cannot tell the two readings
+    apart. The vendor driver is the only reason to prefer the header, and that
+    is enough — but do not record this as "the header was confirmed". It was
+    not; this unit simply agrees either way, and a sibling model with only one
+    of the two filled in is what would decide it.
+    """
+    return resp[HDR_PROFILE]

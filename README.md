@@ -114,11 +114,22 @@ Husky HTG-series unit): region `1` is the per-key matrix (a 6x15 LED grid) and
 region `4` is the side light bar (a strip of 16). `open-ek75 probe` asks your
 own keyboard which zones it has, and which effects each one supports.
 
-**Not implemented**: per-key colour maps, key remapping, macros, multiple
-profiles, and anything outside RGB lighting (this chip's shared protocol also
-covers battery/power state, since this model has one). The GUI shows those as
-named, unimplemented features rather than hiding them — each one says which
-command class it needs.
+**Reading is further along than writing**, and the split is deliberate: a read
+can be wrong and you just get a wrong answer, while a write can leave a
+physical keyboard in a state you cannot get out of.
+
+*Implemented, read-only*: the battery level and idle timer, the key map (`keys`
+— what every key does on both layers, taken from the keyboard rather than from
+the vendor's profile, which disagrees with this hardware 23 times), and which
+profiles exist and which is active (`probe`).
+
+**Not implemented**: per-key colour maps, key *remapping*, macros, and creating
+or switching profiles. The last one is worth being blunt about: the official
+Windows app shows Profile 1/2/3, and this keyboard reports exactly one. The
+other two are not hidden — they do not exist, and creating them is a persistent
+write whose undo has never been tested. The GUI shows unimplemented features as
+named and unimplemented rather than hiding them, each saying which command class
+it needs.
 See [PROTOCOL.md](PROTOCOL.md) — specifically "What is not
 implemented yet" and "What to try next" — for the full map of what is known
 but unported, versus genuinely unknown.

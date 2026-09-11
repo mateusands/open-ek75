@@ -1090,6 +1090,81 @@ inspection: `restore` cannot re-apply a key map without `SetKeyAssign`, so a
 backup of it would be a file nothing can use. The map is worth reading on its
 own; it is not a way back.
 
+## `CLASS_PROFILE` (5) — how many profiles, and which one is live
+
+Implemented **read-only**. The official Windows app offers Profile 1 / 2 / 3;
+this section is the half of that feature which can be proven without writing.
+
+    PFL_CMD_ID_LIST  0   implemented (read)
+    PFL_CMD_CREATE   1   write, persistent, its undo is untested
+    PFL_CMD_DELETE   2   the undo for CREATE, itself untested
+    PFL_CMD_ACTIVE   3   implemented (read); the SET is not
+    PFL_CMD_NAME     4   no GetProfileName exists in the vendor source
+    PFL_CMD_RESET    5   write, destroys a profile's contents
+
+### `GetProfileIdList` — a multi-packet read, profile 0
+
+    GetMultiPacketCmd(profileId=0, class=5, cmd=PFL_CMD_ID_LIST|GET, args=null)
+
+Same machinery as `LED_CMD_ID_LIST`, same ProfileId 0 — asking which profiles
+exist is not a question about one of them. It needed no new transfer code.
+
+**Its post-processing is not the same, and this is the trap.** The LED list
+collapses region ids 0 and 1 into whichever appears first; `GetProfileIdList`
+ends with `ProfileList = new Uint8Array(DataArray)` and filters nothing.
+Decoding the profile list by analogy with its sibling — the obvious move, since
+both are multi-packet id lists — would silently swallow a profile. A test
+asserts the two parsers disagree on one shared input.
+
+### `GetActiveProfileId` — the answer arrives in the header
+
+    HDR_SIZE=0, class 5, cmd 3|GET, HDR_PROFILE **not written**
+      reply: profile id at HDR_PROFILE (byte 4), not at PAYLOAD_BASE
+
+Both zeros on the way out are load-bearing: the request carries no payload for
+`HDR_SIZE` to describe, and asking *which* profile is active cannot take a
+profile id as input. Note the zero size is **not** shared with
+`GetBatteryStatus`, the other profile-less read here — that one sets
+`HDR_SIZE=3`. The two resemble each other in the profile byte only, which is
+the kind of half-resemblance that gets a 3 written by analogy.
+
+**Confirmed on hardware, with one honest limit.** The reply came back as:
+
+```
+02 00 05 83 01 00 01 00 ...
+      ^  ^  ^     ^
+      |  |  |     └─ byte 6, PAYLOAD_BASE — the same 01
+      |  |  └─ byte 4, HDR_PROFILE — the byte the vendor driver reads
+      |  └─ byte 3, command 0x83 = PFL_CMD_ACTIVE | GET_CMD
+      └─ byte 2, class 5 = CLASS_PROFILE
+```
+
+This keyboard puts the id in byte 4 **and** byte 6, so it cannot tell the
+header reading from the payload reading apart. The vendor driver is the only
+reason to prefer the header — which is reason enough — but this is not a
+confirmed byte position. A sibling model with only one of the two filled in is
+what would settle it.
+
+### What the keyboard actually answers
+
+```
+profiles: [1]   active: 1
+```
+
+**One profile, and it is the active one.** This project previously stated "this
+code always uses profile 1" with nothing behind it; now it is measured. The
+consequence for the feature the owner asked for: Profile 2 and 3 are not
+hidden, they do not exist. They have to be **created** with `PFL_CMD_CREATE` —
+a persistent write whose only undo, `PFL_CMD_DELETE`, has never been sent to
+this hardware either. That is a slice of its own, not a detail to bolt on here.
+
+### What is deliberately not implemented
+
+`SetActiveProfileId` is the interesting near-miss. Unlike CREATE it is
+*reversible* — switch back — so it is the natural next write to validate. It is
+still pointless until a second profile exists, and it is still a byte this
+hardware has never been sent. Both reasons have to stop applying, not one.
+
 ## What is not implemented yet
 
 - **Multi-colour effects** (anything needing `N > 1` in the colour list) —
@@ -1106,10 +1181,13 @@ own; it is not a way back.
   tables but are outside `TG_LIGHT_EFFECT_INDEX` (0-32). Probably the app's
   software-rendered effects, streamed as frames. Unverified.
 - **`SetTimeToSleep`** — bytes known, deliberately unshipped; see `CLASS_POWER` above.
+- **Every `CLASS_PROFILE` write** — `PFL_CMD_CREATE`, `PFL_CMD_DELETE`,
+  `PFL_CMD_ACTIVE|SET`, `PFL_CMD_RESET`. The two reads are done and say this
+  keyboard holds exactly one profile; see `CLASS_PROFILE` above for why
+  creating the other two is its own slice.
 - **Everything outside `CLASS_LIGHTING` and the two `CLASS_POWER` reads**:
   `CLASS_KEY` (key remapping),
-  `CLASS_BUTTON`, `CLASS_MACRO`, `CLASS_PROFILE` (multiple profiles — this
-  code always uses profile 1), `CLASS_SENSOR`/`CLASS_MAGNETIC_AXIS` (this
+  `CLASS_BUTTON`, `CLASS_MACRO`, `CLASS_SENSOR`/`CLASS_MAGNETIC_AXIS` (this
   model may not be Hall-effect, but the class exists in the shared
   framework), `CLASS_AUDIO`, `CLASS_LCD`, `CLASS_TEST`. Of `CLASS_POWER`, the
   two reads are done; what remains there is `TIME_2_DIM` (this keyboard does not
@@ -1128,10 +1206,11 @@ own; it is not a way back.
 
 ## What to try next
 
-0. **`open-ek75 probe`** — read-only, writes nothing, and answers three
-   questions at once: does `LED_CMD_ID_LIST` work on this unit, what does
-   `LED_CMD_ATTRIBUTE` say each region's real effect list is, and what is
-   every region's current state. Run this before anything else below.
+0. **`open-ek75 probe`** — read-only, writes nothing, and answers most of the
+   questions below at once: which profiles exist and which is active, does
+   `LED_CMD_ID_LIST` work on this unit, what does `LED_CMD_ATTRIBUTE` say each
+   region's real effect list is, and what is every region's current state. Run
+   this before anything else below.
 
 1. **`open-ek75 watch 1`, then press the Fn lighting shortcuts.** Writes
    nothing: the firmware changes its own state and `watch` prints which field

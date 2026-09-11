@@ -118,11 +118,22 @@ de 6x15 LEDs) e a região `4` é a barra de luz lateral (uma fita de 16).
 `open-ek75 probe` pergunta ao seu próprio teclado quais zonas ele tem e quais
 efeitos cada uma suporta.
 
-**Não implementado**: mapas de cor por tecla, remapeamento de teclas, macros,
-múltiplos perfis e tudo que estiver fora da iluminação RGB (o protocolo
-compartilhado deste chip também cobre bateria e energia, já que este modelo tem
-uma). A interface mostra esses itens nomeados como não implementados, em vez de
-escondê-los — cada um diz de qual classe de comando precisaria.
+**Ler está mais adiantado do que escrever**, e a separação é proposital: uma
+leitura errada devolve uma resposta errada, enquanto uma escrita errada pode
+deixar um teclado físico num estado do qual não se sai.
+
+*Implementado, somente leitura*: nível de bateria e temporizador de suspensão,
+o mapa de teclas (`keys` — o que cada tecla faz nas duas camadas, lido do
+teclado e não do perfil do fabricante, que discorda deste hardware em 23
+atribuições) e quais perfis existem e qual está ativo (`probe`).
+
+**Não implementado**: mapas de cor por tecla, *remapeamento* de teclas, macros,
+e criar ou trocar de perfil. Este último merece ser dito sem rodeios: o
+aplicativo oficial do Windows mostra Perfil 1/2/3, e este teclado reporta
+exatamente um. Os outros dois não estão escondidos — eles não existem, e
+criá-los é uma escrita persistente cujo desfazer nunca foi testado. A interface
+mostra os itens não implementados nomeados como tais, em vez de escondê-los,
+cada um dizendo de qual classe de comando precisaria.
 Veja o [PROTOCOL.md](PROTOCOL.md) — em especial "What is not implemented yet" e
 "What to try next" — para o mapa completo do que é conhecido mas não portado,
 versus o que é genuinamente desconhecido.
