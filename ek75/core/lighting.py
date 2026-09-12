@@ -221,6 +221,31 @@ class Session:
             protocol.build_set_lighting_brightness(region_id, brightness),
         ) is not None
 
+    def write_macro_data(self, macro_id, data):
+        """Write one macro's recorded bytes. Returns whether every chunk ACKed.
+
+        First write to CLASS_MACRO, and the first slice of it: this writes
+        content to a macro id that already exists on the keyboard. It does not
+        create, name or delete one — `MacroCreate`/`SetMacroName`/
+        `MacroDelete` are deliberately not implemented, because the two vendor
+        sources disagree on how creation packages a name with the data (the
+        Windows app does both in one call; the web driver does them
+        separately), and golden rule 2 forbids guessing between them. See
+        PROTOCOL.md's `CLASS_MACRO` section.
+
+        Settles afterward, but only when something was actually sent — same
+        rule `restore`/`restore_key_map` follow: a macro longer than 48 bytes
+        is more than one packet, which is the kind of burst a read straight
+        after can trail; empty data sends nothing (see `device.set_multipacket`)
+        and there is no burst to settle after.
+        """
+        ok = device.set_multipacket(
+            self.fd, 0, protocol.CLASS_MACRO, protocol.MCO_CMD_MEMORY, data,
+            args=bytes([macro_id]), width=2)
+        if data:
+            self.settle()
+        return ok
+
     def write_key_assign(self, key_id, layer, function_id, data,
                          profile_id=protocol.DEFAULT_PROFILE_ID):
         """Assign one key on one layer. Returns whether the firmware ACKed.

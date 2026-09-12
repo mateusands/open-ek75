@@ -546,6 +546,42 @@ def multipacket_chunk_offset(nargs=0, width=1):
     return PAYLOAD_BASE + nargs + 2 * width
 
 
+def build_set_multipacket_chunk(profile_id, cmd_class, command, total, offset,
+                                chunk, args=b"", width=1):
+    """Port of tgdevice.js `SetMultiPacketCmd`'s per-packet body — the
+    write-side sibling of `build_multipacket_chunk`.
+
+    The GET side asks for a chunk and reads it out of the reply. This one
+    embeds the chunk's bytes directly in the REQUEST, right after Total and
+    Offset — there is no reply body to read data out of. Same
+    Total/Offset-at-`PAYLOAD_BASE+len(args)` scheme, `SET_CMD` instead of
+    `GET_CMD`, `HDR_SIZE = len(chunk) + len(args) + 2*width`, matching the
+    vendor's own `E[HDR_SIZE] = r+i+2*a` exactly.
+
+    CONFIRMED ON HARDWARE via `SetMacroData`: an identity write and a
+    same-length content change to this keyboard's real macro 1 both
+    acknowledged, and each read back exactly what was sent. See PROTOCOL.md's
+    `CLASS_MACRO` section for the full ladder.
+    """
+    pkt = _new_packet()
+    pkt[HDR_STATUS] = TARGET_ID
+    pkt[HDR_CLASS] = cmd_class
+    pkt[HDR_COMMAND] = command | SET_CMD
+    pkt[HDR_PROFILE] = profile_id
+    for i, byte in enumerate(args):
+        pkt[PAYLOAD_BASE + i] = byte
+    base = PAYLOAD_BASE + len(args)
+    for i in range(width):
+        shift = 8 * (width - 1 - i)
+        pkt[base + i] = (total >> shift) & 0xFF
+        pkt[base + width + i] = (offset >> shift) & 0xFF
+    data_at = base + 2 * width
+    for i, byte in enumerate(chunk):
+        pkt[data_at + i] = byte
+    pkt[HDR_SIZE] = len(chunk) + len(args) + 2 * width
+    return bytes(pkt)
+
+
 # --- LED_CMD_ID_LIST / LED_CMD_ATTRIBUTE (both read-only) -------------------
 
 def build_get_led_region_id_list_probe(profile_id=0):

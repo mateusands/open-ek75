@@ -165,16 +165,23 @@ Read-only first, as everywhere else in this project.
    which is internal consistency between this project's own two directions,
    not vendor confirmation — corrected here after a review draft overstated
    it as "anchored to device data ... on both ends".
-6. **Only then, writing to hardware**: `build_set_macro_data_chunk` /
-   `device.set_multipacket` (the write-side sibling of `get_multipacket`),
-   plus `MacroCreate`, `SetMacroData`, `SetMacroName`, `MacroDelete` — all
-   with a real wire format now, from the web driver above. Persistent writes,
-   needing the project's full validation ladder: an identity write first
-   (write this keyboard's own macro 1 back to itself, unchanged, verify the
-   read-back is byte-identical), then a real round trip on something
-   expendable. The way back is `Fn`+`Esc` plus the existing key-map backup —
-   a macro is bound to a key through `CLASS_KEY`, already backed up and
-   restored.
+6. ~~**Writing to hardware**~~ — **`SetMacroData` done and confirmed.**
+   `build_set_multipacket_chunk` / `device.set_multipacket` (the write-side
+   sibling of `get_multipacket`) plus `Session.write_macro_data`. Full ladder
+   run on this keyboard's real macro 1: identity write (ACK, read-back
+   identical), a content change of the same 27-byte length (ACK, read-back
+   matches the change), revert (ACK, read-back identical to the original).
+   This also settled a question raised before any byte was sent — the
+   firmware does NOT require a fresh `MacroCreate` before rewriting an
+   existing macro's content, at least at a fixed length.
+
+   **`MacroCreate` / `MacroDelete` / `SetMacroName` remain unported.** Not
+   caution for its own sake: the two vendor sources genuinely disagree on how
+   creation packages a name with the data (the .NET app does both in one
+   call, UTF-16; the web driver does them separately, UTF-8), and there is no
+   single confirmed shape to build from yet. Also unresolved: whether a
+   macro's *length* can change in place — every hardware test above kept the
+   byte count fixed at 27, deliberately.
 
 ## Not determined
 

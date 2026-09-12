@@ -183,3 +183,37 @@ def get_multipacket(fd, profile_id, cmd_class, command, args=b"", width=1,
         data[offset:offset + chunk_len] = resp[data_at:data_at + chunk_len]
         offset += chunk_len
     return bytes(data)
+
+
+def set_multipacket(fd, profile_id, cmd_class, command, data, args=b"",
+                    width=1, retries=20, delay=0.01):
+    """Write a payload too large for one 64-byte report.
+
+    Port of tgdevice.js `SetMultiPacketCmd`: the write-side sibling of
+    `get_multipacket`. No probe step — the caller already knows `len(data)`,
+    unlike a GET where the total comes back in a reply. Each chunk carries its
+    own bytes in the request; there is no reply body to read them out of.
+
+    Empty `data` sends NOTHING and returns True, matching the vendor's own
+    `for (n=0, I=S; I>0; )` shape exactly: a zero-length total makes the loop
+    condition false before its first iteration, so the function returns
+    success without ever calling `CommandProcess`.
+
+    Returns True once every chunk is acknowledged, False on the first one that
+    is not — stopping there rather than continuing past a NAK, which would
+    leave a caller believing a write went through when it did not.
+
+    CONFIRMED ON HARDWARE via `Session.write_macro_data`: full validation
+    ladder run on this keyboard's real macro 1 — see PROTOCOL.md.
+    """
+    total = len(data)
+    offset = 0
+    while offset < total:
+        chunk_len = min(protocol.MULTIPACKET_BLOCK, total - offset)
+        pkt = protocol.build_set_multipacket_chunk(
+            profile_id, cmd_class, command, total, offset,
+            data[offset:offset + chunk_len], args=args, width=width)
+        if command_process(fd, pkt, retries=retries, delay=delay) is None:
+            return False
+        offset += chunk_len
+    return True

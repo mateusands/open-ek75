@@ -10,7 +10,7 @@ vendor's app?". Two of the five answers were that the question was wrong.
 
 | File | Verdict |
 |---|---|
-| [`macros.md`](macros.md) | **Real gap.** The Tg macro API is readable in the Windows app, including two commands the web driver declares and never sends. The record format inside the 27 bytes is the blocker for writing. |
+| [`macros.md`](macros.md) | **Partly closed.** The record format was decoded from the Windows app; the encoder and `SetMacroData` are now confirmed on hardware, full validation ladder. What remains is `MacroCreate`/`SetMacroName` — the two vendor sources genuinely disagree on how creation packages a name with the data. |
 | [`brightness-ladder.md`](brightness-ladder.md) | **Ladder confirmed, use unconfirmed.** `{0, 70, 120, 190, 255}` is real and shaped like a step ladder, with clamp and wrap helpers — and nothing in the app calls any of them. Closeable with `watch` and no write. |
 | [`key-test.md`](key-test.md) | **No protocol needed.** The app uses Windows Raw Input, not a Dareu command; `CLASS_TEST` has no command list at all. Measured on a real KDE session: tkinter sees most keys with focus, and the desktop eats Print and the media keys. The valuable half is the list of keys that *cannot* be tested. |
 | [`wireless-dongle.md`](wireless-dongle.md) | **Talks to the dongle, not the keyboard.** Pairing is not a command — it is `Fn`+`1/2/3` and `Fn`+`Q`, run by the firmware. One read, `DEV_CMD_WIRELESS_CONNECT_STATUS`, is agreed by both vendor sources. See the corrections at the top of that file. |

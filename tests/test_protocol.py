@@ -1502,6 +1502,130 @@ def test_a_profile_is_a_backup_and_an_old_backup_is_a_profile():
             raise AssertionError("deleting a missing profile reported success")
 
 
+def test_set_multipacket_chunk_layout():
+    """Port of tgdevice.js `SetMultiPacketCmd`'s per-packet body — the write-side
+    sibling of `build_multipacket_chunk`.
+
+    Expected bytes composed by hand from the vendor source, not by running the
+    builder: Total and Offset sit right after `args`, `width` bytes each,
+    big-endian, and the chunk's data bytes follow immediately after those —
+    embedded in the REQUEST, unlike the GET side where a reply carries them.
+
+    HDR_SIZE = len(chunk) + len(args) + 2*width, matching
+    `E[HDR_SIZE] = r+i+2*a` in the vendor source exactly.
+    """
+    got = protocol.build_set_multipacket_chunk(
+        profile_id=0, cmd_class=protocol.CLASS_MACRO,
+        command=protocol.MCO_CMD_MEMORY, total=27, offset=0,
+        chunk=bytes.fromhex("04e00a80"), args=bytes([1]), width=2)
+    expected = _padded(bytes.fromhex(
+        "00" "09" "06" "05" "00" "00"     # status size(4+1+4=9) class(6) cmd(5) profile
+        "01"                               # args: macro id
+        "001b" "0000"                      # Total=27 (0x1B), Offset=0 (width=2, BE)
+        "04e00a80"))                       # the chunk itself
+    assert got == expected
+
+    # A later chunk: offset moves, total stays the same.
+    got2 = protocol.build_set_multipacket_chunk(
+        profile_id=0, cmd_class=protocol.CLASS_MACRO,
+        command=protocol.MCO_CMD_MEMORY, total=27, offset=4,
+        chunk=bytes.fromhex("05e00b095e"), args=bytes([1]), width=2)
+    assert got2[protocol.HDR_SIZE] == 5 + 1 + 4        # chunk + args + 2*width
+    assert got2[protocol.PAYLOAD_BASE + 1:protocol.PAYLOAD_BASE + 3] == \
+        bytes.fromhex("001b")                          # Total unchanged (27 = 0x1B)
+    assert got2[protocol.PAYLOAD_BASE + 3:protocol.PAYLOAD_BASE + 5] == \
+        bytes.fromhex("0004")                          # Offset = 4
+
+    # width=1: the vendor writes Total and Offset as single raw bytes, not
+    # masked or shifted — confirmed straight from the source's `1==a` branch.
+    got3 = protocol.build_set_multipacket_chunk(
+        profile_id=0, cmd_class=protocol.CLASS_MACRO,
+        command=protocol.MCO_CMD_NAME, total=5, offset=0,
+        chunk=b"Hello", args=bytes([1]), width=1)
+    assert got3[protocol.PAYLOAD_BASE + 1] == 5          # Total
+    assert got3[protocol.PAYLOAD_BASE + 2] == 0          # Offset
+    assert got3[protocol.PAYLOAD_BASE + 3:protocol.PAYLOAD_BASE + 8] == b"Hello"
+
+
+def test_set_multipacket_sends_nothing_for_empty_data():
+    """Matches the vendor's own loop shape exactly: `for(n=0,I=S;I>0;)` never
+    runs its body when `S` (the total) is 0, so the function returns success
+    having sent zero packets — not one empty chunk, not a probe. Verified by
+    monkeypatching `command_process` and asserting it is never called.
+    """
+    from ek75.core import device
+
+    calls = []
+    real = device.command_process
+    try:
+        device.command_process = lambda *a, **k: calls.append(1) or a[1]
+        assert device.set_multipacket(None, 0, 6, 5, b"", args=bytes([1]),
+                                      width=2) is True
+        assert calls == []
+    finally:
+        device.command_process = real
+
+
+def test_set_multipacket_stops_at_the_first_unacknowledged_chunk():
+    """A write that spans more than one chunk must stop, not continue past a
+    NAK — continuing would leave the caller believing later bytes landed when
+    the packet carrying them was never confirmed.
+    """
+    from ek75.core import device, protocol
+
+    sent = []
+    def fails_on_second(fd, packet, **kw):
+        sent.append(packet)
+        return None if len(sent) == 2 else packet
+
+    real = device.command_process
+    try:
+        device.command_process = fails_on_second
+        data = bytes(range(protocol.MULTIPACKET_BLOCK)) * 3   # 3 chunks
+        ok = device.set_multipacket(None, 0, 6, 5, data, args=bytes([1]),
+                                    width=2)
+        assert ok is False
+        assert len(sent) == 2, "should have stopped after the failing chunk"
+    finally:
+        device.command_process = real
+
+
+def test_write_macro_data_settles_only_when_something_was_sent():
+    """Same rule the lighting/key-map bursts already follow: settle after
+    sending, not after doing nothing. A macro write spanning more than one
+    48-byte chunk is exactly the kind of burst a read straight afterward can
+    trail behind.
+    """
+    from ek75.core import lighting
+
+    settled = []
+
+    class Recorder:
+        MULTIPACKET_BLOCK = 48
+
+        @staticmethod
+        def set_multipacket(fd, profile_id, cmd_class, command, data,
+                            args=b"", width=1, **kw):
+            return True
+
+        @staticmethod
+        def settle():
+            settled.append(1)
+
+    real = lighting.device
+    session = lighting.Session.__new__(lighting.Session)
+    session.fd = None
+    try:
+        lighting.device = Recorder
+        assert session.write_macro_data(1, b"") is True
+        assert settled == [], "settled after sending nothing"
+
+        session.write_macro_data(1, bytes.fromhex("04e00a80"))
+        assert settled == [1]
+    finally:
+        lighting.device = real
+
+
 def test_the_led_matrix_matches_the_public_key_list():
     """The matrix comes out of a proprietary binary; this checks it with public data.
 

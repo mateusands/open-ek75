@@ -1670,10 +1670,59 @@ arithmetic on a coincidence, not a decode, and it is wrong. `docs/investigations
   path, and returns the synthesised string `` `Macro ${id}` ``. Porting a read
   whose own author does not trust its output is guessing with extra steps. The
   GUI shows `Macro N` for exactly the reason the vendor does, and says so.
-- **Every macro write** — `MCO_CMD_CREATE`, `MCO_CMD_DELETE`,
-  `MCO_CMD_MEMORY|SET`, `MCO_CMD_NAME|SET`. All persistent, all going through
-  `SetMultiPacketCmd`, a transport this project has never sent, and all of them
-  needing the data format above, which is not decoded.
+
+### `MCO_CMD_MEMORY|SET` — implemented, and confirmed on hardware
+
+`SetMultiPacketCmd`, unlike `LED_CMD_FRAME`'s transport, is not a dead enum
+entry: `tgdevice.js` implements it in full and `SetMacroData` uses it. Port
+is `protocol.build_set_multipacket_chunk` (the write-side sibling of
+`build_multipacket_chunk`) and `device.set_multipacket` (the write-side
+sibling of `get_multipacket`) — same Total/Offset-at-`PAYLOAD_BASE` scheme,
+`SET_CMD` instead of `GET_CMD`, the chunk's bytes embedded in the request
+rather than read back from a reply. Empty data sends nothing, matching the
+vendor's own `for(...;I>0;)` loop shape exactly.
+
+`Session.write_macro_data(macro_id, data)` is the service-layer entry point.
+
+**Confirmed on hardware, full ladder, on this keyboard's real macro 1:**
+
+    identity write (the same 27 bytes back)      -> ACK, read-back identical
+    content change (Left Ctrl 0xE0 -> 0xE1),
+      same 27-byte length, one usage byte changed -> ACK, read-back == the change
+    revert to the original 27 bytes               -> ACK, read-back identical
+
+This also answers a question raised before any byte was sent: whether the
+firmware requires a macro to have just been created before its content can be
+rewritten. It does not, at least for a same-length rewrite — `SetMacroData`
+alone, with no `MacroCreate` beforehand, was accepted and correctly reflected
+on an already-existing macro.
+
+**The way back**, same as every other write in this project: the exact 27
+bytes are on record above, in `docs/investigations/macros.md`, and in
+`tests/test_protocol.py` — `write_macro_data(1, those_bytes)` is the immediate
+recovery, proven to work by the identity write before the content change ever
+ran. `Fn`+`Esc`, the firmware's own factory reset, remains the documented
+fallback underneath that. This slice's narrow scope — content only, no
+create or delete — makes it less likely to be needed, not unnecessary.
+
+### Deliberately not ported (still)
+
+- **`MacroCreate` / `MacroDelete` / `SetMacroName`.** Not merely unvalidated —
+  the two vendor sources genuinely disagree on how creation is packaged. The
+  web driver's `MacroCreate(macroId, len)` takes no name; naming is a separate
+  `SetMacroName` call, UTF-8 (`TextEncoder`). The Windows app's
+  `WriteMemorryMacro` calls one combined `HidDevice.CreatMacro(id, namePtr,
+  nameLen, dataPtr, size)` — name and data in a single call, name as **UTF-16**
+  (`Unicode.GetBytes`, length compared as UTF-16 code units). Building either
+  from one source alone risks guessing at how the other actually sequences
+  them, which golden rule 2 forbids. Resolving this needs either a live USB
+  capture of the web driver creating a macro, or a second look reconciling the
+  two sources — not a guess between them.
+- **A GUI macro editor**, or changing a macro's *length*. Nothing is known
+  about whether the 27-byte figure for macro 1 is a property of a fixed
+  storage slot declared at creation, or something `SetMacroData` communicates
+  fresh every write — the identity/content-change tests above deliberately
+  never changed the byte count, so this remains untested.
 
 ## `LED_CMD_FRAME` (4) — per-key colour, reconstructed but unsent
 
@@ -1951,9 +2000,11 @@ the web driver either. Unread.
   `PFL_CMD_ACTIVE|SET`, `PFL_CMD_RESET`. The two reads are done and say this
   keyboard holds exactly one profile; see `CLASS_PROFILE` above for why
   creating the other two is its own slice.
-- **Every `CLASS_MACRO` write**, and the macro data format itself — see
-  `CLASS_MACRO` above. The two reads are done and this keyboard reports one
-  stored macro.
+- **`MacroCreate` / `MacroDelete` / `SetMacroName`** — the two vendor sources
+  disagree on how creation packages a name with the data (see `CLASS_MACRO`
+  above). `MCO_CMD_MEMORY|SET` itself is implemented and confirmed on
+  hardware: the two reads are done, this keyboard reports one stored macro,
+  and its content can be rewritten in place.
 - **Everything outside `CLASS_LIGHTING` and the two `CLASS_POWER` reads**:
   `CLASS_BUTTON`, `CLASS_SENSOR`/`CLASS_MAGNETIC_AXIS` (this
   model may not be Hall-effect, but the class exists in the shared
