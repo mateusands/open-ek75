@@ -76,8 +76,9 @@ Transcribed from the manual's own diagrams (not vendor software):
 | `Fn`+`F9` | "Aumentar" volume do sistema — **tested live, wrong**: it lowers | Matches the profile's HID usage `0xEA`, "Volume Decrement". See §3. |
 | `Fn`+`F10` | "Diminuir" volume do sistema — **tested live, wrong**: it raises | Matches the profile's HID usage `0xE9`, "Volume Increment". See §3. |
 | `Fn`+`F11` | Silenciar (mute) | Matches `CONSUMER_KEYS[0xE2]`, `"Mute"` |
+| `Fn`+`F12` | "Alternar entre modo Windows e Mac (as luzes indicadoras piscarão para confirmar a mudança)" | Matches `keymap.FUNCTION_NAMES[45]`, `"Windows / Mac layout"` — checked directly against the profile: `F12`'s `fn_function_id` is `45`. Previously decompiled, never before tied to a specific key or a manual description |
 | `Fn`+`1`/`2`/`3` | Connect Bluetooth device slot 1/2/3 | Matches `docs/investigations/wireless-dongle.md`'s finding, independently, from a different source |
-| `Fn`+`Q`, held 3-4s | **Bluetooth** reconnect ("Pressione Fn+Q e mantenha pressionado por 3-4 segundos... indicador de luz irá começar a piscar") | `wireless-dongle.md` had this labelled as **2.4G** pairing (following `keymap.FUNCTION_NAMES[42]`, `"2.4G pairing"`, itself a decompiled name). See §3. |
+| `Fn`+`Q`, held 3-4s | **Bluetooth** reconnect ("Pressione Fn+Q e mantenha pressionado por 3-4 segundos... indicador de luz irá começar a piscar") | `wireless-dongle.md` had this labelled as **2.4G** pairing (following `keymap.FUNCTION_NAMES[42]`, `"2.4G pairing"`, itself a decompiled name). See §3 — accepted as the manual's own claim, not live-tested (owner's call: these are firmware-local behaviours with no packet this project ever sends either way, so a printed manual is sufficient documentation without a hardware round-trip). |
 
 ## 3. Two things that conflict with what was already on record
 
@@ -104,9 +105,13 @@ correct at once: the keyboard has a 3-position physical switch (`A` / `BT` /
 `2.4G`, per the manual's installation diagrams), and the same physical `Fn`+
 `Q` combo plausibly does "re-pair whichever radio mode is currently
 selected" rather than being hardwired to one mode — in which case
-`FUNCTION_NAMES[42]`'s name is simply too narrow, not wrong. Left as an open
-question rather than corrected outright, since neither source states the
-switch-position behaviour explicitly.
+`FUNCTION_NAMES[42]`'s name is simply too narrow, not wrong. **Owner's
+call: not worth a live test** — unlike F9/F10 (a one-second listen to the
+system volume), settling this would need actually pairing a second
+Bluetooth device, for a question that changes nothing this project sends
+or reads. Left open in `FUNCTION_NAMES[42]`'s label rather than corrected,
+with the manual's own, more specific claim (Bluetooth reconnect) recorded
+here as the accepted description of what `Fn`+`Q` does in practice.
 
 ## 4. Fix applied on the strength of this manual alone
 
