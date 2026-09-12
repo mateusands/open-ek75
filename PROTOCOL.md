@@ -1975,16 +1975,36 @@ because being wrong about *why* is worth recording:
 - **A way back.** Lighting is the safest write class here — `backup`/`restore`
   are confirmed — so this is a question of sequencing, not of danger.
 
-### `_brightnessLevel`: the Fn brightness ladder, probably
+### `_brightnessLevel`: the Fn brightness ladder — CONFIRMED ON HARDWARE
 
 The product DLL's other `FieldRva` entry is five bytes — `0, 70, 120, 190, 255`
-— and `TK51G0101::get_BrightnessLevel` returns a field of that name. Five steps
-is what `BrightnessAdjust` on `Fn`+`↑`/`↓` would cycle through, and 255 is
-`BRIGHTNESS_MAX`.
+— and `TK51G0101::get_BrightnessLevel` returns a field of that name.
 
-Inferred, not confirmed: nobody has watched the stored brightness walk those
-values. It is cheap to settle and costs no write — `watch 1` while pressing
-`Fn`+`↑`, the same experiment that settled the speed range.
+**Confirmed by watching it happen**, `watch 1` with no write: the shortcut is
+`Fn`+`-`/`Fn`+`=` (not `Fn`+`↑`/`↓` as first guessed — see
+`docs/investigations/manual-fn-shortcuts.md`, the retail unit's own printed
+manual, which is what pointed at the right keys). The reported `brightness`
+walked
+
+    255 -> 190 -> 120 -> 70 -> 0 -> 70 -> 190 -> 70 -> 0 -> 70 -> 120 -> 190
+
+— every value a member of `{0, 70, 120, 190, 255}`, single steps wherever two
+consecutive polls caught consecutive presses (a couple of transitions skip a
+middle rung, e.g. `0 -> 70 -> 190`; `watch`'s polling interval is slower than
+a held key's repeat rate, so an intermediate value can come and go between two
+polls — not evidence of a different step size, just a sampling gap). It
+clamps at `0` rather than wrapping (seen twice, holding at the bottom before
+reversing); the top end was not pressed past `255` in this run, so clamp vs.
+wrap at the ceiling specifically remains unobserved, though nothing suggests
+it would differ from the floor's behaviour.
+
+`Fn`+`↑`/`↓` and `Fn`+`Space` were tried first and both changed nothing —
+checked directly against the profile, neither carries an Fn-layer function
+either, the same shape as `-`/`=` before the correct shortcut was known. This
+brightness value is never reported by `read_effect`/`LED_CMD_ATTRIBUTE` on
+its own; only the dedicated `LIT_CMD_GET_BRIGHTNESS` this project already
+implements sees it, which is how `watch 1` catches the shortcut moving it at
+all.
 
 ### The software effects: ids 128-147, and what they are
 

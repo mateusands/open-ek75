@@ -1,5 +1,9 @@
 # Investigation: does `_brightnessLevel` = `{0, 70, 120, 190, 255}` back the `Fn`+`↑`/`↓` brightness step?
 
+**CONFIRMED ON HARDWARE, 2026-09-11 — see §3.3.** The array is real and the
+firmware does walk it, on `Fn`+`-`/`Fn`+`=` (not `Fn`+`↑`/`↓`, the shortcut
+this investigation originally guessed at — see §3.2).
+
 Scope: read-only static analysis of the decompiled Windows app
 (`docs/vendor-binaries/extracted/app/`, proprietary, never committed) plus
 `PROTOCOL.md`/`ek75/core/*` in this repo. **No bytes were sent to the
@@ -308,13 +312,44 @@ contradicting, this section's `_brightnessLevel`/`GetNextBrightnessLevel`
 finding: the ladder is real, local to the keyboard's own firmware memory,
 and invisible to any host read, on purpose or otherwise.
 
-**Still not run:** a clean test of `Fn`+`-`/`Fn`+`=` specifically (this
-project has now tried arrows and Space, both apparently the wrong keys).
-Given the pattern above, the likely outcome is the same as §3.1 — brightness
-never appears in `watch`'s output no matter which physical key drives it —
-but confirming that against the *correct* shortcut, rather than the wrong
-ones already tried, would close this properly instead of leaving it open on
-a technicality.
+**Run, and the prediction above was wrong — see §3.3.** This section
+predicted brightness would stay invisible on `watch` no matter which key
+drove it, reasoning from `-`/`=` carrying no Fn-layer function the same way
+the wrong-guess keys did. That reasoning did not hold: `brightness` DID
+change, cleanly, walking the exact predicted ladder. Left here rather than
+deleted, per this project's own convention of keeping a wrong guess on
+record next to its correction (same treatment `PROTOCOL.md` gives the
+macro-format guess in `macros.md`) — the "no Fn-layer function -> invisible
+to any host read" inference turned out to only correctly predict "no Fn-layer
+function", not "invisible to `watch`"; those are different claims, and
+conflating them is the actual mistake here, not the brightness mechanism
+itself.
+
+## 3.3. CONFIRMED — `watch 1`, `Fn`+`-`/`Fn`+`=`, real hardware
+
+Run with the owner, no write, `watch 1` open:
+
+    255 -> 190 -> 120 -> 70 -> 0 -> 70 -> 190 -> 70 -> 0 -> 70 -> 120 -> 190
+
+Every value is a member of `{0, 70, 120, 190, 255}`. `flag`/`speed`/`colors`
+never moved — this shortcut touches only `brightness`, cleanly. A couple of
+transitions skip a middle rung (`0 -> 70 -> 190`): `watch`'s polling interval
+is slower than a held key's repeat rate, so a value can appear and vanish
+between two polls without being logged — a sampling gap, not a different
+step size, and every transition that WAS caught back-to-back moved exactly
+one rung. Clamps at `0` (sat there across two consecutive presses before the
+direction reversed) rather than wrapping to `255`; the run never pressed
+past `255` at the top, so clamp-vs-wrap at the ceiling specifically is the
+one thing this run does not settle, though there is no reason to expect it
+differs from the floor.
+
+This closes the loop `§3`'s procedure asked for, on the second attempt: the
+first (§3.1, `Fn`+arrows) and second (§3.2, `Fn`+`Space`) guesses at which
+key were both wrong — found wrong by checking the profile directly (neither
+key carries an Fn-layer function), not by exhausting every key by hand — and
+the retail manual (`manual-fn-shortcuts.md`) is what pointed at the actual
+shortcut. `PROTOCOL.md`'s `_brightnessLevel` section is updated to match,
+dropping "probably".
 
 ## 4. Other constants worth extracting from the product DLLs' `FieldRva` data
 
