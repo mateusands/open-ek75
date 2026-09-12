@@ -1145,13 +1145,13 @@ def build_macro_steps(steps):
     return bytes(out)
 
 
-# --- CLASS_DEVICE (0) — wireless dongle status, read-only --------------------
+# --- CLASS_DEVICE (0) — wireless dongle status, read-only, CONFIRMED --------
 # Recovered from the web driver AND the Windows app, which agree on class and
 # command but disagree on HDR_SIZE (7 vs 6) — see the builder's own docstring.
-# This queries the DONGLE (VID 260D PID 0042), a second physical device this
-# project has never opened; `device.find_dongle()` locates it. Blocked on a
-# permission this repository's udev rule does not grant yet — see
-# PROTOCOL.md's `CLASS_DEVICE` section.
+# This queries the DONGLE (VID 260D PID 0042), a second physical device from
+# the keyboard; `device.find_dongle()`/`device.open_dongle()` reach it once
+# `packaging/60-ek75.rules` covers its PID. Confirmed on hardware — see
+# PROTOCOL.md's `CLASS_DEVICE` section for the exact bytes.
 DEV_CMD_WIRELESS_CONNECT_STATUS = 32
 
 
@@ -1172,10 +1172,12 @@ def build_get_wireless_connect_status():
     Windows app sends 6), for a field this request does not otherwise use —
     there is no payload either way.
 
-    NOT SENT TO HARDWARE: `/dev/hidraw3`, the dongle's vendor Feature Report
-    interface on the machine this was developed against, is root-only —
-    this repository's udev rule covers only the keyboard's PID (0101), not
-    the dongle's (0042). See PROTOCOL.md.
+    CONFIRMED ON HARDWARE: this exact 64-byte packet was sent to the dongle
+    (`/dev/hidraw3` on the machine this was developed against, opened via
+    `device.open_dongle()` once `packaging/60-ek75.rules` was extended to
+    cover PID 0042) and produced a real, ready reply — see PROTOCOL.md and
+    `tests/test_protocol.py`'s `test_get_wireless_connect_status_confirmed
+    _on_hardware`.
     """
     pkt = _new_packet()
     pkt[HDR_STATUS] = 0

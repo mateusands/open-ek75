@@ -31,7 +31,15 @@
 
 # Investigation: wireless connection and the 2.4G dongle
 
-Status: **investigation, no code.** Nothing here has been sent to a keyboard,
+Status: **CONFIRMED ON HARDWARE.** `packaging/60-ek75.rules` was extended to
+cover the dongle's PID (owner's explicit decision), and
+`DEV_CMD_WIRELESS_CONNECT_STATUS` was sent for real: with the keyboard
+switched to 2.4G and paired to this exact dongle, the reply decoded to one
+connected slot carrying the keyboard's own PID (`0x0101`) — see PROTOCOL.md's
+`CLASS_DEVICE` section for the exact bytes. Pairing itself is still `Fn`-key
+firmware behaviour, not a command (unchanged from the rest of this document).
+
+Status before that: **investigation, no code.** Nothing here has been sent to a keyboard,
 and no hardware for this part exists on the bench (no dongle was tested — this
 project's owner has only ever driven this keyboard over the USB cable).
 
@@ -415,21 +423,20 @@ approval, ordered from lowest to highest risk/effort.
    Confirmed by hand on the real dongle: correctly and uniquely returns
    `/dev/hidraw3` out of its 5 HID interfaces, using the existing detector
    unmodified.
-2. ~~**Read-only: `GetWirelessConnectStatus`.**~~ **Built and tested, not
-   sent.** `protocol.build_get_wireless_connect_status` /
-   `parse_wireless_connect_status`, byte-match tested against both vendor
-   sources (which agree on class/command, disagree on `HDR_SIZE` — ported the
-   web driver's). Not sent: `/dev/hidraw3` on this machine is
-   `crw------- root:root`, and `packaging/60-ek75.rules` grants `uaccess`
-   only to the keyboard's PID. `open_dongle()` deliberately does not exist
-   yet — extending the udev rule is a system-level, owner-facing decision,
-   not something to bundle into a slice that reads as read-only.
-3. **CLI/GUI surface, gated on the permission above.** Nothing to expose yet
-   — there is no way to open the dongle and get an actual reply to show.
-   Revisit once the udev rule is extended and a real reply has been captured;
-   this project's own rule for `CLASS_POWER` and effects beyond
-   Static/Breathing already sets the precedent of labelling anything shown
-   before that as unconfirmed.
+2. ~~**Read-only: `GetWirelessConnectStatus`.**~~ **CONFIRMED ON HARDWARE.**
+   `protocol.build_get_wireless_connect_status` / `parse_wireless_connect
+   _status`, byte-match tested against both vendor sources (which agree on
+   class/command, disagree on `HDR_SIZE` — ported the web driver's) — and now
+   also confirmed by an actual reply: the owner extended
+   `packaging/60-ek75.rules` to cover the dongle's PID, `device.open_dongle()`
+   opened `/dev/hidraw3`, and the reply decoded to exactly one connected slot
+   carrying the keyboard's own PID (`0x0101`) — matching a dongle paired to
+   this keyboard over 2.4G. See PROTOCOL.md's `CLASS_DEVICE` section for the
+   exact bytes.
+3. **CLI/GUI surface.** Still nothing exposed there — this investigation's
+   own read confirmed the protocol, not a decision to add a user-facing
+   dongle status panel. Revisit as its own, separate slice if that is
+   wanted.
 4. **Stop here regardless.** Everything past step 3 —
    `DEV_CMD_WIRELESS_RSSI`, `DEV_CMD_RF_PROTOCOL_VER`, any pairing trigger —
    should not be implemented at all under the current golden rules: rule 2
@@ -470,6 +477,10 @@ No slice here touches `CLASS_DFU` or anything CLAUDE.md already gates.
   BLE bonding, retry/timeout behaviour — none of this is protocol-visible in
   either vendor source; it is presumably entirely inside the RF/BLE
   firmware stack the two USB-side protocols never touch.
-- No hardware confirmation of anything in this document — there is no
-  wireless dongle on this project's bench, so every finding here is
-  decompiler/JS evidence only, never a captured packet or a visual read-back.
+- **Updated after the fact**: the wireless-status read (§ above) is now
+  hardware-confirmed, once a dongle became available and the udev rule was
+  extended — the caveat above described this document's state when it was
+  first written, when no dongle existed on this project's bench and every
+  finding was decompiler/JS evidence only. Pairing itself (`Fn`+`1/2/3`/
+  `Fn`+`Q`) is still unconfirmed by a captured packet — that claim rests on
+  the absence of any `SetRfPair` call site, not on a read-back.

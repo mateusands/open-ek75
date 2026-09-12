@@ -1,14 +1,15 @@
-# udev rule for the Dareu TK51G/EK75 keyboard family (VID 260D PID 0101) —
-# open-ek75. Sold as Husky HTG200/HTG500/HTG800 V2 and under other brands
-# sharing the same Dareu/TgDevice reference design.
+# udev rule for the Dareu TK51G/EK75 keyboard family (VID 260D PID 0101) and
+# its 2.4G dongle (VID 260D PID 0042) — open-ek75. Sold as Husky HTG200/
+# HTG500/HTG800 V2 and under other brands sharing the same Dareu/TgDevice
+# reference design.
 #
 # Install to /etc/udev/rules.d/60-ek75.rules, then:
 #   sudo udevadm control --reload-rules && sudo udevadm trigger
 # (packaging/install.sh does both for you)
 #
-# The keyboard is configured through HID Feature Reports on its /dev/hidraw*
-# node, which is root-only by default. This rule hands access to the
-# logged-in user.
+# Both devices are configured through HID Feature Reports on their own
+# /dev/hidraw* node, root-only by default. This rule hands access to the
+# logged-in user for each.
 #
 # WHY uaccess AND NOT MODE="0666"
 #
@@ -52,8 +53,19 @@
 
 SUBSYSTEM=="hidraw", ATTRS{idVendor}=="260d", ATTRS{idProduct}=="0101", TAG+="uaccess"
 
+# The 2.4G dongle (VID 260D PID 0042) — a second, separate physical device,
+# not another interface of the keyboard above. See PROTOCOL.md's
+# CLASS_DEVICE section and docs/investigations/wireless-dongle.md:
+# DEV_CMD_WIRELESS_CONNECT_STATUS is built and byte-match tested, but was
+# never sent until this rule existed to grant access to it. Same reasoning
+# as the keyboard's own rule above applies unchanged — uaccess over MODE
+# because a hidraw node is a full keystroke logger if left world-writable,
+# even for a device that itself carries no keys.
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="260d", ATTRS{idProduct}=="0042", TAG+="uaccess"
+
 # --- Fallback for systems without systemd-logind -----------------------------
-# Comment out the rule above and uncomment this, then add yourself to the
-# group:  sudo usermod -aG plugdev $USER   (log out and back in)
+# Comment out the two rules above and uncomment these, then add yourself to
+# the group:  sudo usermod -aG plugdev $USER   (log out and back in)
 #
 #SUBSYSTEM=="hidraw", ATTRS{idVendor}=="260d", ATTRS{idProduct}=="0101", GROUP="plugdev", MODE="0660"
+#SUBSYSTEM=="hidraw", ATTRS{idVendor}=="260d", ATTRS{idProduct}=="0042", GROUP="plugdev", MODE="0660"

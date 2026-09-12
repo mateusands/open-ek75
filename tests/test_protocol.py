@@ -1929,6 +1929,35 @@ def test_parse_wireless_connect_status():
         {"count": 0, "slots": []}
 
 
+def test_get_wireless_connect_status_confirmed_on_hardware():
+    """CONFIRMED ON HARDWARE, real bytes, not hand-derived — the first ones
+    this project ever sent to the 2.4G dongle (VID 260D PID 0042), once
+    `packaging/60-ek75.rules` was extended to cover it (see PROTOCOL.md's
+    `CLASS_DEVICE` section and `docs/investigations/wireless-dongle.md`).
+
+    Captured with the keyboard switched to its 2.4G mode and paired to this
+    exact dongle: the request `build_get_wireless_connect_status()` produces
+    is byte-identical to what the hardware accepted, and the reply decodes
+    to exactly one connected slot carrying the keyboard's own USB PID
+    (0x0101) — which is exactly what should be true of a dongle currently
+    paired to this keyboard over 2.4G, not an assumption.
+    """
+    request = bytes.fromhex(
+        "000700a000000000000000000000000000000000000000000000000000000000"
+        "0000000000000000000000000000000000000000000000000000000000000000")
+    assert len(request) == protocol.REPORT_SIZE
+    assert protocol.build_get_wireless_connect_status() == request
+
+    reply = bytes.fromhex(
+        "020400a000000101010100000000000000000000000000000000000000000000"
+        "0000000000000000000000000000000000000000000000000000000000000000")
+    assert len(reply) == protocol.REPORT_SIZE
+    assert protocol.parse_wireless_connect_status(reply) == {
+        "count": 1,
+        "slots": [{"target_id": 0x10, "status": 1, "pid": 0x0101}],
+    }
+
+
 def test_the_led_matrix_matches_the_public_key_list():
     """The matrix comes out of a proprietary binary; this checks it with public data.
 

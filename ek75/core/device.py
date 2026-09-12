@@ -20,11 +20,11 @@ VID = 0x260D
 PID = 0x0101
 
 # The 2.4G dongle (VID 260D PID 0042), a SECOND physical device — not another
-# interface of the keyboard. This project has never opened it: its vendor
-# Feature Report node (/dev/hidraw3 on the machine this was developed
-# against) is root-only, because packaging/60-ek75.rules grants `uaccess`
-# only to PID 0101. See PROTOCOL.md's `CLASS_DEVICE` section before adding
-# anything that opens it.
+# interface of the keyboard. Its vendor Feature Report node was root-only
+# until packaging/60-ek75.rules was extended to cover PID 0042 (an owner
+# decision, not bundled silently alongside the keyboard's own rule) — see
+# PROTOCOL.md's `CLASS_DEVICE` section for the confirmed-on-hardware read
+# this now supports via `open_dongle()`.
 DONGLE_PID = 0x0042
 
 # The keyboard exposes 5 HID interfaces; only one carries the vendor Feature
@@ -108,9 +108,8 @@ def find_dongle():
     interface, or None if it is not connected or not found.
 
     Finding it needs no elevated access at all — this only globs `/dev` and
-    reads world-readable sysfs files. OPENING it is a different matter: see
-    `DONGLE_PID`'s comment and PROTOCOL.md's `CLASS_DEVICE` section. There is
-    deliberately no `open_dongle()` yet.
+    reads world-readable sysfs files. OPENING it needs `open_dongle()`,
+    which needs the udev rule from `DONGLE_PID`'s comment installed first.
 
     Confirmed correct on the one machine this was developed against: of the
     dongle's 5 HID interfaces, this returns exactly the one
@@ -149,16 +148,39 @@ def command_process(fd, packet, retries=20, delay=0.01):
     return None
 
 
+def _open_or_raise(path, not_found_message):
+    """`os.open(path, O_RDWR)`, or `FileNotFoundError(not_found_message)` when
+    `path` is None. Shared by `open_device()`/`open_dongle()` the same way
+    `_find_vendor_feature_report()` already shares their search logic — the
+    two differ only in which device they name in the message, not in what
+    "not found" or "open it" means. A `PermissionError` (the udev rule not
+    covering this PID) is not caught here: `gui/controller.py`'s
+    `_as_device_error` already turns that into a `"permission"`-kind error
+    for either device, identically.
+    """
+    if path is None:
+        raise FileNotFoundError(not_found_message)
+    return os.open(path, os.O_RDWR)
+
+
 def open_device():
     """Open the keyboard's vendor interface for read/write, or raise FileNotFoundError."""
-    path = find_device()
-    if path is None:
-        raise FileNotFoundError(
-            "Dareu TK51G/EK75 keyboard not found (VID 260D PID 0101). "
-            "Is it connected by USB cable? (RGB configuration does not work "
-            "over the 2.4G wireless dongle on this model.)"
-        )
-    return os.open(path, os.O_RDWR)
+    return _open_or_raise(find_device(),
+        "Dareu TK51G/EK75 keyboard not found (VID 260D PID 0101). "
+        "Is it connected by USB cable? (RGB configuration does not work "
+        "over the 2.4G wireless dongle on this model.)")
+
+
+def open_dongle():
+    """Open the 2.4G dongle's vendor interface for read/write, or raise
+    FileNotFoundError.
+
+    Needs `packaging/60-ek75.rules` to cover PID 0042 — see `DONGLE_PID`'s
+    comment.
+    """
+    return _open_or_raise(find_dongle(),
+        "The 2.4G dongle was not found (VID 260D PID 0042). Is it "
+        "plugged in, and is the keyboard's mode switch set to 2.4G?")
 
 
 # How long the link needs to be quiet after a run of commands before a read

@@ -304,8 +304,10 @@ Bus 003 Device 003: ID 260d:0101  EK75_Keyboard
 ```
 
 `260D` is registered to a small OEM and is shared with at least a 2.4G
-dongle/receiver product (`260D:0042`) unrelated to this protocol — only
-`0101` is this keyboard.
+dongle/receiver product (`260D:0042`) — only `0101` is this keyboard, but
+`0042` is not unrelated to this project: it is a second, separate device
+this project also talks to for one read-only query, `CLASS_DEVICE`'s
+wireless status, covered in its own section below.
 
 The official Dareu web driver's device profile for this PID says:
 
@@ -1724,7 +1726,7 @@ create or delete — makes it less likely to be needed, not unnecessary.
   fresh every write — the identity/content-change tests above deliberately
   never changed the byte count, so this remains untested.
 
-## `CLASS_DEVICE` (0) — the 2.4G dongle's wireless status, built but unsent
+## `CLASS_DEVICE` (0) — the 2.4G dongle's wireless status — CONFIRMED ON HARDWARE
 
 Not a command against the keyboard. `DEV_CMD_WIRELESS_CONNECT_STATUS` (32) is
 asked of the **dongle** — a second physical device, VID `260D` PID `0042` —
@@ -1759,9 +1761,9 @@ file's own `TARGET_ID` constant already used for every wired query. Kept for
 that reason, not picked arbitrarily between two disagreeing sources.
 
 `protocol.build_get_wireless_connect_status` / `parse_wireless_connect_status`
-implement this. Neither has been sent — see below.
+implement this, and both are now confirmed against a real reply — see below.
 
-### Why nothing has been sent: a permission this repository does not grant yet
+### The permission this repository did not grant at first — now extended, owner's call
 
 `device.find_dongle()` locates the dongle's vendor Feature Report interface —
 a straight mirror of `find_device()`, sharing its search logic via one
@@ -1771,18 +1773,34 @@ correctly and uniquely finds `/dev/hidraw3` (of the dongle's 5 HID
 interfaces), using the *existing* `_looks_like_vendor_feature_report`
 detector completely unmodified.
 
-But that path is `crw------- root:root`. `packaging/60-ek75.rules` grants
-`uaccess` only to `idProduct=="0101"` — the keyboard. The dongle (`0042`) is
-not covered, so opening it fails with `PermissionError` regardless of how
-correct the code is. This is not a bug to fix in Python; it is a system
-configuration this project has never been asked to grant.
+That path was `crw------- root:root` at first: `packaging/60-ek75.rules`
+granted `uaccess` only to `idProduct=="0101"` — the keyboard, not the dongle
+(`0042`). Extending the rule to a second `SUBSYSTEM=="hidraw"` line for
+`0042` (owner's explicit decision, not assumed from "it's just like the
+keyboard rule") and reinstalling with `packaging/install.sh` fixed that,
+without needing to replug — `udevadm trigger` alone re-evaluated the ACL for
+the already-connected dongle.
 
-**There is deliberately no `open_dongle()`.** Extending the udev rule to
-cover PID `0042` and re-running `sudo udevadm control --reload-rules &&
-sudo udevadm trigger` — the same two commands `packaging/install.sh` already
-runs for the keyboard — is the missing piece, and it is the owner's decision
-to make explicitly, not an assumption that "it's just like the keyboard
-rule" bundled silently into a slice that reads as read-only.
+### CONFIRMED ON HARDWARE — first bytes ever sent to the dongle
+
+With the udev rule extended and the keyboard switched to its 2.4G mode
+(paired to this exact dongle), `device.open_dongle()` opened
+`/dev/hidraw3` and `command_process` sent the request and read a real,
+ready reply:
+
+    request: 000700a000...(zero payload, 64 bytes)
+    reply:   020400a0000001010101000000...(64 bytes)
+    parsed:  {"count": 1, "slots": [{"target_id": 0x10, "status": 1,
+                                     "pid": 0x0101}]}
+
+The request is byte-identical to what `build_get_wireless_connect_status()`
+already produced from the vendor-source derivation above — nothing needed
+correcting. The reply decodes to exactly one connected slot carrying PID
+`0x0101`, the keyboard's own USB PID — precisely what a dongle currently
+paired to this keyboard over 2.4G should report, not merely a
+plausible-looking shape. `tests/test_protocol.py`'s
+`test_get_wireless_connect_status_confirmed_on_hardware` pins these exact
+bytes as its own test, alongside the earlier hand-derived ones.
 
 ## `LED_CMD_FRAME` (4) — per-key colour, reconstructed but unsent
 
