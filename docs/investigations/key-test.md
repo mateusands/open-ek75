@@ -420,6 +420,28 @@ misread as a hardware verdict it cannot actually support.
   that carries no Fn assignment at all** — not tested against real
   hardware in this task (out of scope: investigation only, no hardware
   writes or reads performed for this document).
+- **Slice 2's table assumes a US/ANSI keyboard layout for shifted digit-row
+  symbols** (found by `/code-review` while reviewing Slice 2's diff): X11
+  resolves a keysym from the *active XKB layout*, not from the physical HID
+  usage the keyboard firmware actually sent, so `Shift+6` on a Brazilian
+  ABNT2 layout (this project ships Portuguese i18n, so a real user) reports
+  a different keysym than `asciicircum` — Slice 2's table then returns
+  `None` for a key that really did send a valid, working usage. This is a
+  property of matching on *keysym name* at all, not a bug fixable by adding
+  more keysym spellings: it is the same class of fragility as the KP_1/
+  Num_Lock press-vs-release mismatch above, and the vendor app's own design
+  (§1) sidesteps it entirely by reading the raw HID usage id directly off
+  `WM_INPUT`, never going through a layout-dependent symbol at all. On
+  Linux, `event.keycode` (the X11 hardware keycode, layout-independent) is
+  the closer analogue — Slice 3 should resolve **letters, digits and
+  punctuation** by keycode against a fixed physical-position table, and
+  reserve keysym names for the keys that do not vary by layout (arrows,
+  F-keys, modifiers, Home/End/Print/Pause, media keys) rather than trusting
+  every keysym Slice 2 currently maps. Left as a design note for Slice 3,
+  not fixed in Slice 2 itself: a keycode-based table is a materially
+  different mechanism, and deciding to build it belongs with the rest of
+  Slice 3's design, not as a silent addition to the pure keysym table this
+  investigation originally scoped.
 - **The exact internal layout `ParseRawInputHidData`/`RegisterRawInputHook`
   use inside the native `DataSource.dll` helper.** That helper is native
   (non-.NET) and outside what `dnfile`/`dncil` can decompile; the .NET side

@@ -1666,6 +1666,118 @@ def test_find_dongle_reports_absent_rather_than_guessing():
         builtins.open = real_open
 
 
+def test_keysym_table_covers_every_usage_this_keyboards_keys_need():
+    """Completeness — but against THIS board's real keys, not `keymap.py`'s
+    generic tables. `HID_KEYS`/`HID_MODIFIER_USAGES` are full USB-HID usage
+    tables (every ordinary keyboard-page key, every one of the 8 modifier
+    positions) — `keymap.py` uses them to decode whatever id a profile hands
+    it, so they include usages this 75%-ANSI board has no physical key for at
+    all (usage 50, the ISO-only "Non-US # and ~" key; modifier usage 0xE7,
+    Right Win, which this board's key list confirms it lacks).
+
+    The actual "this board's real keys" source is `ek75/data/0101.json`
+    itself, read the same way `key_input.py`'s own docstring claims to be
+    scoped: each key's `default-function-Id`/`-data` AND
+    `default-fn-function-Id`/`-data` — BOTH layers, not just the base one.
+    An earlier version of this test only walked the base layer and passed
+    while the table was missing 13 usages the Fn layer actually needs (Fn+I/
+    O/P/K/L and Fn+F1..F8); `test_hid_keys_covers_every_usage_this_keyboard
+    _emits` above already walks both pairs for exactly this reason, and this
+    test now matches that shape.
+
+    function_id 6 is CombineKey (data = [modifier bitmask, keyboard-page
+    usage]); function_id 8 is MediaKeys (data = [usage hi, usage lo],
+    Consumer page).
+    """
+    from ek75.gui import key_input
+    from ek75.core import layout
+
+    reached = set(key_input.KEYSYM_TO_USAGE.values())
+    profile = layout.load()
+
+    for k in profile.keys:
+        for fid, fdata in ((k.function_id, k.function_data),
+                            (k.fn_function_id, k.fn_function_data)):
+            if fid == 6 and len(fdata) >= 2:               # CombineKey
+                modifier_bits, usage = fdata[0], fdata[1]
+                if usage:
+                    assert (key_input.PAGE_KEYBOARD, usage) in reached, \
+                        f"no keysym reaches usage {usage} needed by key " \
+                        f"{k.label!r} ({k.id})"
+                elif modifier_bits:
+                    # A modifier key: no keyboard-page usage of its own
+                    # here, the bitmask says which. `HID_MODIFIER_USAGES`'s
+                    # bit->usage order (`keymap.HID_MODIFIERS`) is (Ctrl,
+                    # Shift, Alt, Win) x (L, R), one bit each, matching this
+                    # profile's own encoding.
+                    for bit, modifier_usage in zip(
+                            (1, 2, 4, 8, 16, 32, 64, 128),
+                            range(0xE0, 0xE8)):
+                        if modifier_bits & bit:
+                            assert (key_input.PAGE_KEYBOARD, modifier_usage) \
+                                in reached, \
+                                f"no keysym reaches modifier usage " \
+                                f"0x{modifier_usage:02X} needed by key " \
+                                f"{k.label!r} ({k.id})"
+            elif fid == 8 and len(fdata) >= 2:              # MediaKeys
+                usage = (fdata[0] << 8) | fdata[1]
+                assert (key_input.PAGE_CONSUMER, usage) in reached, \
+                    f"no keysym reaches consumer usage 0x{usage:03X} " \
+                    f"needed by key {k.label!r} ({k.id})"
+
+
+def test_keysym_table_invents_no_usage_keymap_does_not_already_know():
+    """The other direction: every (page, usage) this table produces must
+    resolve to something real through the EXISTING tables — this authored
+    table is checked against `keymap.py`'s tables, not the other way around,
+    so a transposed digit here would show up as "resolves to nothing" rather
+    than silently mapping a keypress to a made-up usage.
+    """
+    from ek75.gui import key_input
+    from ek75.core import keymap
+
+    for keysym, (page, usage) in key_input.KEYSYM_TO_USAGE.items():
+        if page == key_input.PAGE_KEYBOARD:
+            known = (usage in keymap.HID_KEYS
+                    or usage in keymap.HID_MODIFIER_USAGES)
+        elif page == key_input.PAGE_CONSUMER:
+            known = usage in keymap.CONSUMER_KEYS
+        else:
+            known = False
+        assert known, f"{keysym!r} -> (page {page}, usage 0x{usage:02X}) " \
+                      f"is not a usage keymap.py recognises"
+
+
+def test_keysym_table_excludes_keys_this_board_does_not_have():
+    """This is a 75%-layout board with no Insert, Num Lock or Menu key on
+    EITHER layer (confirmed against the profile directly — see
+    `test_keysym_table_covers_every_usage_this_keyboards_keys_need`'s
+    docstring for how Home/End/Pause/Scroll_Lock/Print Screen were found to
+    be real Fn-shortcuts here and are no longer in this excluded list).
+    `Fn` never gets an entry — not "not yet", structurally never, since it
+    has no HID usage at all.
+    """
+    from ek75.gui import key_input
+
+    for absent in ("Insert", "Num_Lock", "Menu", "Fn"):
+        assert key_input.usage_for_keysym(absent) is None, absent
+
+
+def test_usage_for_keysym_matches_this_sessions_own_captured_keypresses():
+    """Spot-checked against real events this investigation actually captured
+    on a live Tk window on this machine (not against this table's own
+    design) — see `docs/investigations/key-test.md` §2.
+    """
+    from ek75.gui import key_input as ki
+
+    assert ki.usage_for_keysym("a") == (ki.PAGE_KEYBOARD, 4)
+    assert ki.usage_for_keysym("F5") == (ki.PAGE_KEYBOARD, 62)
+    assert ki.usage_for_keysym("Up") == (ki.PAGE_KEYBOARD, 82)
+    assert ki.usage_for_keysym("Caps_Lock") == (ki.PAGE_KEYBOARD, 57)
+    assert ki.usage_for_keysym("Super_L") == (ki.PAGE_KEYBOARD, 0xE3)
+    assert ki.usage_for_keysym("nonexistent_keysym_name") is None
+
+
 def test_get_wireless_connect_status_layout():
     """Port of tgdevice.js `GetWirelessConnectState` — CLASS_DEVICE (0),
     DEV_CMD_WIRELESS_CONNECT_STATUS (32).
