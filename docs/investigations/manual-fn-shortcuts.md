@@ -1,10 +1,12 @@
 # Investigation: the official retail manual's Fn-shortcut table
 
 Status: **new first-party source, cross-checked against this project's existing
-decompiled findings — some confirm, one genuinely conflicts, one is brand new
-ground.** Nothing here has been sent to a keyboard because of this document;
-the one concrete new live test it suggests is proposed at the end, not yet
-run.
+decompiled findings — most confirm, one (F9/F10's volume direction) was
+tested live and found to be the MANUAL's own error, one (`Fn`+`Q`'s wireless
+mode) is still genuinely unsettled, one is brand new ground.** Nothing here
+has been sent to a keyboard because of this document; the one concrete new
+live test it still suggests (`Fn`+`[`/`Fn`+`]`) is proposed at the end, not
+yet run.
 
 ## 0. The source
 
@@ -71,36 +73,28 @@ Transcribed from the manual's own diagrams (not vendor software):
 | `Fn`+`F6` | Voltar ao início da mídia (previous) | Matches `CONSUMER_KEYS[0xB6]`, `"Previous track"` |
 | `Fn`+`F7` | Reproduzir/Pausar (play/pause) | Matches `CONSUMER_KEYS[0xCD]`, `"Play / Pause"` |
 | `Fn`+`F8` | Avançar para próxima mídia (next) | Matches `CONSUMER_KEYS[0xB5]`, `"Next track"` |
-| `Fn`+`F9` | **Aumentar** volume do sistema | Profile's HID usage for `F9` is `0xEA`, **"Volume Decrement"** per the USB HID Consumer-page spec — the opposite direction. See §3. |
-| `Fn`+`F10` | **Diminuir** volume do sistema | Profile's HID usage for `F10` is `0xE9`, **"Volume Increment"** — also the opposite direction. See §3. |
+| `Fn`+`F9` | "Aumentar" volume do sistema — **tested live, wrong**: it lowers | Matches the profile's HID usage `0xEA`, "Volume Decrement". See §3. |
+| `Fn`+`F10` | "Diminuir" volume do sistema — **tested live, wrong**: it raises | Matches the profile's HID usage `0xE9`, "Volume Increment". See §3. |
 | `Fn`+`F11` | Silenciar (mute) | Matches `CONSUMER_KEYS[0xE2]`, `"Mute"` |
 | `Fn`+`1`/`2`/`3` | Connect Bluetooth device slot 1/2/3 | Matches `docs/investigations/wireless-dongle.md`'s finding, independently, from a different source |
 | `Fn`+`Q`, held 3-4s | **Bluetooth** reconnect ("Pressione Fn+Q e mantenha pressionado por 3-4 segundos... indicador de luz irá começar a piscar") | `wireless-dongle.md` had this labelled as **2.4G** pairing (following `keymap.FUNCTION_NAMES[42]`, `"2.4G pairing"`, itself a decompiled name). See §3. |
 
 ## 3. Two things that conflict with what was already on record
 
-**F9/F10's volume direction is backwards from the raw HID usage codes.**
-USB's HID Usage Tables (Consumer page) fix `0xE9` = Volume Increment, `0xEA`
-= Volume Decrement — this is not something this project inferred, it is the
-published standard (and matches, independently, the Linux kernel's own
-`hid-input.c` mapping `HID_CP_VOLUMEUP` to `0xE9`). This keyboard's profile
-assigns `F9` -> usage `0xEA` (decrement) and `F10` -> usage `0xE9`
-(increment) — checked directly against `ek75/data/0101.json`, not assumed.
-The manual says the opposite: `F9` raises system volume, `F10` lowers it.
-
-One of three things is true, and this project cannot settle which from a
-decompile or a document alone: the manual's authors swapped the two labels
-when writing it (plausible — the F1-F8/F11 rows all check out, so this
-would be an isolated slip); the vendor's own profile data has the two usage
-bytes swapped (equally plausible — nothing about `0xE9`/`0xEA` looks
-transposed in the surrounding hex, so this would be a firmware/profile
-authoring bug, not a decode error here); or the physical keycap silkscreen
-for F9/F10 does not match either source. **This is a one-line, five-second
-test the owner can run without touching this project at all**: press
-`Fn`+`F9`, watch whether the OS's own volume indicator goes up or down, then
-the same for `Fn`+`F10`. No `watch`, no terminal, no code — this shortcut's
-effect is on the *host OS's* volume, not on anything `CLASS_LIGHTING` or any
-other class here reads back.
+**F9/F10's volume direction — SETTLED, the manual is wrong, this project's
+decode was right.** Tested directly on the owner's OS volume indicator (no
+`watch`, no terminal — this shortcut is a plain Consumer-page media key, it
+never touches `CLASS_LIGHTING` or anything else this project reads back):
+`Fn`+`F9` **lowers** the volume, `Fn`+`F10` **raises** it. That matches the
+profile's own HID usage bytes exactly (`F9` -> `0xEA`, Volume Decrement;
+`F10` -> `0xE9`, Volume Increment — the published USB HID Consumer-page
+standard, and `keymap.CONSUMER_KEYS`'s existing labels) and contradicts the
+manual, which states the opposite pairing. Of the three possibilities §3
+originally listed, it was the manual's own printed labels that were
+transposed — an isolated slip, not a pattern (its F1-F8/F11 rows all
+checked out against this project's independent decode). No code or doc
+correction needed here beyond this note: `keymap.py`'s labels were already
+right.
 
 **`Fn`+`Q`'s wireless mode is labelled differently by two sources.**
 `keymap.FUNCTION_NAMES[42]` says `"2.4G pairing"` (from decompiling
