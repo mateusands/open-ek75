@@ -3,10 +3,11 @@
 Status: **new first-party source, cross-checked against this project's existing
 decompiled findings — most confirm, one (F9/F10's volume direction) was
 tested live and found to be the MANUAL's own error, one (`Fn`+`Q`'s wireless
-mode) is still genuinely unsettled, one is brand new ground.** Nothing here
-has been sent to a keyboard because of this document; the one concrete new
-live test it still suggests (`Fn`+`[`/`Fn`+`]`) is proposed at the end, not
-yet run.
+mode) stays open by the owner's own call (not worth a live test), and one
+(`Fn`+`[`/`Fn`+`]`, cycle lighting effect/colour) was tested live and fully
+confirmed — see §5.** Nothing has been sent to a keyboard because of this
+document; every state change described here was produced by the owner's own
+keypresses, read back with `watch`, no write.
 
 ## 0. The source
 
@@ -120,16 +121,22 @@ row is corrected (§1) — this did not need a live test, the manual's own spec
 table and keyboard diagram are enough on their own to know the claim was
 wrong for the actual retail unit.
 
-## 5. New ground: `Fn`+`[`/`Fn`+`]` (cycle lighting effect / colour) — untested
+## 5. `Fn`+`?`/`Fn`+`]` (cycle lighting effect / colour) — colour confirmed, effect key UNCERTAIN
 
-Checked directly against the profile (not assumed): the `[` key's Fn-layer
-`function_id` is **53** (`"Cycle lighting effect"`), and `]`'s is **55**
-(`"Cycle lighting colour"`) — both already named in `keymap.FUNCTION_NAMES`
-from an earlier decompile pass, but **neither had ever been confirmed bound
-to a real key on this keyboard before this manual's own diagram pointed at
-`]`.** `[` (53) is not mentioned in the manual at all (only `]` is shown,
-labelled "Mudança modos RGB") — plausibly the manual just illustrates one of
-a natural next/previous pair and treats both under one icon.
+**Correction — this section originally said `[` (not `]`) carries function 53
+("Cycle lighting effect"), sourced from `ek75/data/0101.json`'s STATIC
+profile.** That source is exactly the one `PROTOCOL.md`'s own "The device
+profile disagrees with the keyboard — 23 times" section warns against: a
+live sweep of THIS keyboard, done in an earlier session, found `[` is an
+ordinary bracket key on the real hardware with no Fn function at all, and
+that the real, measured binding for function 53 is `Fn`+`\` and `Fn`+`R-Alt`
+— not `Fn`+`[`. `]` -> 55 ("Cycle lighting colour") is the one row that
+happens to match between both sources.
+
+So which physical key actually drove the effect-cycling test below is not
+yet settled — asked, not yet answered. `]`'s role (cycle colour) stands
+either way, confirmed independently by the profile, the earlier live sweep,
+and this test all agreeing.
 
 Unlike `brightness-ladder.md`'s brightness shortcuts, **this one is cheaply
 and unambiguously testable with `watch`**: cycling the active lighting
@@ -150,5 +157,44 @@ Press `Fn`+`]` a few times, pausing between each; then, separately,
 which direction each key moves it. This would be the first confirmation
 that any `LED_CMD_*` shortcut is actually bound to a key on this hardware —
 every other candidate this project has tried (`LightingDirection`,
-`LightingSpeed`'s Fn binding) came back unbound. Not run yet; this document
-only proposes it.
+`LightingSpeed`'s Fn binding) came back unbound.
+
+**Run, `watch 1`, no write:**
+
+    [22:08:24] Wave    flag=0 speed=0 brightness=120 colors=[]
+    [22:08:26] Wave    ...    colors=[(255, 0, 0)]        <- changed: colors
+    [22:08:27] Reactive ...   colors=[]                   <- changed: effect, colors
+    [22:08:28] Starlit
+    [22:08:29] Rotate
+    [22:08:30] RainbowW
+    [22:08:30] SteadyStream
+    [22:08:30] AreaReactive
+    [22:08:31] LineReactive
+    [22:08:31] Scanning
+    [22:08:32] Heartbeat
+    [22:08:32] Breathing
+    [22:08:33] Static
+    [22:08:34] Neon
+    [22:08:35] RunningLight
+    [22:08:35] Wave                                       <- back to the start
+
+Two distinct, real functions are visible here, told apart by which fields
+moved: the first change touched `colors` only, `effect` staying `Wave`
+(function 55, "cycle lighting colour" — on `Wave`, cycling colour turns on
+a fixed red rather than the effect's own automatic rainbow, without leaving
+the effect); every change after that touched `effect` only, cycling forward
+through 14 real firmware effects and wrapping back to `Wave` exactly where
+it started (function 53, "cycle lighting effect" — `colors` resets to empty
+on each step, since most of these effects carry no fixed colour of their
+own). `brightness` stayed at `120` throughout — both shortcuts are isolated
+from brightness and from each other.
+
+**`]` -> 55 is confirmed as the key for the colour change** (agrees with the
+profile, the earlier live sweep, and this test). **Which key drove the
+effect change (53) is not confirmed** — this test proves function 53 is
+real and bound to *something*, but not, on its own, to `[` specifically;
+see the correction at the top of this section. Along with `_brightnessLevel`
+in `brightness-ladder.md`, this is nonetheless the second confirmed case of
+a genuine `CLASS_LIGHTING` state change happening entirely through a
+firmware-local Fn shortcut, readable after the fact through the same
+`LED_CMD_ATTRIBUTE` poll this project already uses for everything else.
