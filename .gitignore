@@ -1,21 +1,5 @@
-# ─── CrewWatch kit upstream checkout: reference only, never committed ────────
-# A clone of github.com/mateusands/claude-code-crew-kit, kept here to diff what
-# .claude/ has against what upstream ships. It is someone else's repository
-# with its own history — it must never become part of this one.
 crewkit/
 
-# ─── Vendor material: proprietary/third-party, never committed ───────────────
-# docs/ is otherwise versioned (see below) — these two are the deliberate
-# exceptions, kept as dedicated rules rather than folded into a blanket docs/*
-# so the intent survives even if docs/ is reorganized:
-#   vendor-binaries/   Husky's Windows app (compiled .exe/.dll) — proprietary,
-#                       kept locally as the reference behind PROTOCOL.md's
-#                       "A second vendor source".
-#   vendor-reference/  the Dareu web driver's own .js, copied/decompiled from
-#                       their site — third-party source, same treatment as
-#                       the binaries above even though it is readable text:
-#                       PROTOCOL.md cites file/line from it without needing to
-#                       publish the file itself.
 docs/vendor-binaries/
 docs/vendor-reference/
 
@@ -27,31 +11,18 @@ build/
 dist/
 .github/
 
-# capture traffic never enters the repo
 *.pcapng
 *.pcap
 
-# personal backups made with `open-ek75 backup`
 backup*.json
 
-# Your roster and your models — never committed (see .crew-kit-config.example)
 .crew-kit-config
 
-# ─── CrewWatch: the whole kit stays out of git ────────────────────────────────
-# Everything the installer put here is tooling for whoever is driving the agent,
-# not part of open-ek75. None of it is versioned, by decision.
-#
-# 🔴 Because nothing is distributed, nothing needs the MIT notice to travel with
-# it. `.claude/LICENSE-crewwatch` is ignored along with the rest — that is the
-# kit's own rule for a fully ignored install, not an oversight. Un-ignore the
-# notice the day any of these files starts being committed.
 .claude/
 .crew/
 .crew-kit-config.example
 AGENTS.md
 START.md
-# CLAUDE.md here predates the kit — 107 lines of this project's own conventions,
-# not an installed file. Ignored by decision: it stays on disk and out of git.
 CLAUDE.md
 .mcp.json
 .mcp.json.example
