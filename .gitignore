@@ -4,13 +4,20 @@
 # with its own history — it must never become part of this one.
 crewkit/
 
-# ─── Vendor binaries: proprietary, never committed ───────────────────────────
-# Husky's Windows app, kept locally as the reference behind docs/PROTOCOL.md's
-# "A second vendor source". This rule is deliberately SEPARATE from the docs/
-# entry below: docs/PROTOCOL.md is this project's declared source of truth and
-# the README links to it six times, so docs/ ought to be published one day —
-# and when it is, these binaries must not go with it.
+# ─── Vendor material: proprietary/third-party, never committed ───────────────
+# docs/ is otherwise versioned (see below) — these two are the deliberate
+# exceptions, kept as dedicated rules rather than folded into a blanket docs/*
+# so the intent survives even if docs/ is reorganized:
+#   vendor-binaries/   Husky's Windows app (compiled .exe/.dll) — proprietary,
+#                       kept locally as the reference behind PROTOCOL.md's
+#                       "A second vendor source".
+#   vendor-reference/  the Dareu web driver's own .js, copied/decompiled from
+#                       their site — third-party source, same treatment as
+#                       the binaries above even though it is readable text:
+#                       PROTOCOL.md cites file/line from it without needing to
+#                       publish the file itself.
 docs/vendor-binaries/
+docs/vendor-reference/
 
 __pycache__/
 *.pyc
@@ -19,13 +26,6 @@ __pycache__/
 build/
 dist/
 .github/
-
-# `docs/*` rather than `docs/`, so that a subdirectory can be re-included below:
-# git cannot un-ignore anything whose parent directory is excluded outright.
-# The vendor-binaries rule above still covers them — `docs/*` matches that
-# directory too, and its own entry stays as the explicit statement of intent.
-docs/*
-!docs/investigations/
 
 # capture traffic never enters the repo
 *.pcapng
