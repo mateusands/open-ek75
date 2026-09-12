@@ -1,7 +1,16 @@
 # Investigation: a "press a key, see it light up" test screen
 
-Status: **investigation and plan, no code.** Nothing here has been sent to a
-keyboard, `ek75/` was not touched, no tests were run.
+Status: **built.** Slice 0 already existed; Slices 1 (throwaway probe) and 2
+(`ek75/gui/key_input.py`, the keysym→HID table) shipped first; Slice 3 (the
+live page, `ek75/gui/pages/key_test.py`) shipped after the owner's explicit
+sign-off on breaking the mouse-only convention, design-reviewed and verified
+against real hardware. Slice 4 (rollover tracking) remains deliberately
+unbuilt — optional, lower priority, higher ambiguity, per §4 below.
+
+What follows is the investigation and plan as originally written, kept
+intact rather than rewritten after the fact — the sections below describe
+what was true before any of this was built, and the plan they propose is
+exactly what shipped.
 
 ## 0. The question
 
