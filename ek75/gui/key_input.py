@@ -44,20 +44,29 @@ for _usage, _letter in enumerate("abcdefghijklmnopqrstuvwxyz", start=4):
     KEYSYM_TO_USAGE[_letter.upper()] = (PAGE_KEYBOARD, _usage)
 del _usage, _letter
 
-# Digits: the digit keysym for the unshifted press, and the standard US-layout
-# shifted symbol for the same physical key (this model's factory legends are
-# the US '~!@#$%^&*()_+' row) — both are the same HID usage, only the
-# modifier byte differs, and this table does not carry modifier state.
+# Digits: the digit keysym for the unshifted press, and the shifted symbol
+# the SAME physical key sends under `ek75/data/0101.json`'s own (plain
+# US-ASCII) `KeyString` labels for this row — both are the same HID usage,
+# only the modifier byte differs, and this table does not carry modifier
+# state. An earlier version of this comment claimed "this model's factory
+# legends are the US row", which the retail unit's own printed manual
+# (`docs/investigations/manual-fn-shortcuts.md` §1) contradicts directly:
+# its spec sheet says "Layout: ABNT2" and its keyboard diagram shows
+# Brazilian legends (a Ç key, a ~^ dead key) — the vendor PROFILE data this
+# project builds packets from is unaffected (it is plain US-ASCII either
+# way, checked directly), but the physical keycap and, more importantly,
+# the OS-side XKB layout a real owner runs are not.
 #
-# KNOWN GAP (found by /code-review): X11 resolves a keysym from the ACTIVE
-# XKB layout, not from the HID usage the firmware sent, so on a non-US
-# layout (e.g. Brazilian ABNT2 — this project ships pt-BR i18n, a real
-# user) Shift+6 reports a keysym other than "asciicircum" here, and this
-# table wrongly answers "unrecognized" for a key that did send a valid
-# usage. Not fixed here: the real fix is resolving by physical `keycode`
-# instead of by keysym for this class of key, which is a different
-# mechanism belonging to Slice 3's design, not a patch to this pure-keysym
-# table — see docs/investigations/key-test.md §5's note on this.
+# KNOWN GAP (found by /code-review, sharpened by the manual above): X11
+# resolves a keysym from the ACTIVE XKB layout, not from the HID usage the
+# firmware sent, so on a Brazilian ABNT2 layout — not a hypothetical other
+# user, but this exact product's realistic buyer — Shift+6 reports a
+# keysym other than "asciicircum" here, and this table wrongly answers
+# "unrecognized" for a key that did send a valid usage. Not fixed here: the
+# real fix is resolving by physical `keycode` instead of by keysym for this
+# class of key, which is a different mechanism belonging to Slice 3's
+# design, not a patch to this pure-keysym table — see
+# docs/investigations/key-test.md §5's note on this.
 _DIGIT_SHIFT_SYMBOL = {
     "1": "exclam", "2": "at", "3": "numbersign", "4": "dollar",
     "5": "percent", "6": "asciicircum", "7": "ampersand", "8": "asterisk",

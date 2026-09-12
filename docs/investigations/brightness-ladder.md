@@ -286,6 +286,36 @@ in hand and more deliberate timing (hold `Fn` down first, then tap the
 other key, release both together), or if `usbmon`/a similar capture ever
 becomes available to settle it without relying on narrated key presses.
 
+## 3.2. The real shortcut, per the official retail manual
+
+`docs/investigations/manual-fn-shortcuts.md` distills the HTG800/Nomadic's
+own printed manual — a first-party source, not a decompile — and it settles
+which physical key this shortcut actually is: **`Fn`+`-` and `Fn`+`=`**, not
+`Space` (§3.1's guess, from this project's own reading of
+`keymap.FUNCTION_NAMES[54]`) and not the arrow keys (the manual also lists
+`Fn`+`↑`/`↓` as a *second* brightness shortcut, "ambos os lados" — both
+sides/zones at once).
+
+This also explains §3.1's negative results rather than leaving them
+unexplained: checked directly against the profile, the `-` and `=` keys
+carry **no Fn-layer function at all** (`fn_function_id == 6`, the same
+plain `CombineKey` usage as their base layer) — exactly the same shape the
+arrow keys and `Space` already showed. Brightness (and `Fn`+`]`'s lighting
+shortcuts, `manual-fn-shortcuts.md` §5) are apparently wired straight into
+the firmware's own input handling, bypassing the reconfigurable per-key
+table this project reads (`CLASS_KEY`) entirely — consistent with, not
+contradicting, this section's `_brightnessLevel`/`GetNextBrightnessLevel`
+finding: the ladder is real, local to the keyboard's own firmware memory,
+and invisible to any host read, on purpose or otherwise.
+
+**Still not run:** a clean test of `Fn`+`-`/`Fn`+`=` specifically (this
+project has now tried arrows and Space, both apparently the wrong keys).
+Given the pattern above, the likely outcome is the same as §3.1 — brightness
+never appears in `watch`'s output no matter which physical key drives it —
+but confirming that against the *correct* shortcut, rather than the wrong
+ones already tried, would close this properly instead of leaving it open on
+a technicality.
+
 ## 4. Other constants worth extracting from the product DLLs' `FieldRva` data
 
 `Products/TK51G0101.dll` has exactly two `FieldRva` rows — no more static

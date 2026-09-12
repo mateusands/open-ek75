@@ -53,11 +53,24 @@ easy to conflate and must not be:
    the one method that looks like it would send a live pairing command
    (`SetRfPair`) has zero call sites anywhere in the shipped app. Pairing is a
    physical action the user performs *on the keyboard*: `Fn+1`/`Fn+2`/`Fn+3`
-   start Bluetooth pairing to slot 1/2/3, `Fn+Q` starts 2.4G pairing — both are
+   select Bluetooth device slot 1/2/3, `Fn+Q` (held 3-4s) re-pairs — both are
    ordinary `CLASS_KEY` function bindings the firmware executes locally when
    the key is pressed. The app's only role here is to *read* those bindings
    (already the case for every other key) and label them correctly in the
    remap UI.
+
+   **Correction:** the line above originally called `Fn+Q` "2.4G pairing",
+   following `keymap.FUNCTION_NAMES[42]`'s decompiled name. The retail unit's
+   own printed manual (`docs/investigations/manual-fn-shortcuts.md` §2-3, a
+   first-party source, not a decompile) places `Fn`+`Q` under its
+   **Bluetooth** section specifically, describing exactly the "hold 3-4s,
+   the indicator blinks fast, then pair" sequence. Both may still be true at
+   once — this keyboard has a physical 3-position radio switch (wired /
+   2.4G / BT), and the same `Fn`+`Q` combo plausibly re-pairs whichever mode
+   is currently selected rather than being hardwired to one — but nothing
+   confirms that reading over the other, so `FUNCTION_NAMES[42]`'s
+   "2.4G pairing" label should be read as "too narrow", not corrected
+   outright, until one of the two claims is actually tested.
 
 Beyond that, the app shows battery level (`BatteryFrame`/`BatteryManageFrame`,
 already covered by this project's `CLASS_POWER` reads) and reacts to Windows
