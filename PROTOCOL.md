@@ -115,7 +115,7 @@ than guessed at; the app renders some effects in software (`LedInterface` has
 `RainbowWRun`, `RaindropRun`, `DiffusionRun` and friends, plus
 `SetVirtualLedEffectFrame`), so ids at 128+ are plausibly that, unverified.
 
-### `Speed` is 1-3, not 0-255
+### `Speed` is 1-3, not 0-255 — confirmed by the firmware itself
 
 `PageLedRegionTg`'s compiled XAML declares the speed slider `Minimum="1"`
 `Maximum="3"`, which is why the UI shows three labels (slow / normal / fast),
@@ -123,6 +123,21 @@ and `SetLedParamControllerState` rewrites a stored `0` to `2` before
 displaying it — "normal" being the middle of a three-position control. The
 same method disables the slider entirely for effects without a speed;
 `protocol.EFFECTS_WITH_SPEED` is that list.
+
+**Confirmed on hardware, without writing anything.** This keyboard binds
+`LightingSpeed` (48) to `Fn`+`←` and `Fn`+`→` (see the CLASS_KEY section — the
+device profile hides this). Running `open-ek75 watch 1` and pressing them makes
+the firmware change its own stored value, and `watch` prints what moved:
+
+```
+speed=0  ->  3  ->  2  ->  1  ->  2  ->  3  ->  2
+```
+
+It never produced 0 and never exceeded 3. The XAML said 1-3; the firmware's own
+key handler agrees, which is a stronger tier of evidence than reading a slider
+declaration — and it cost no write. Note that a *stored* 0 does exist (it was the
+value before the first keypress); the Fn cycle simply never produces one, which
+is why the vendor's app rewrites a stored 0 to 2 before displaying it.
 
 ### Brightness: a 0-255 byte, shown as 1-100
 
@@ -289,8 +304,10 @@ Bus 003 Device 003: ID 260d:0101  EK75_Keyboard
 ```
 
 `260D` is registered to a small OEM and is shared with at least a 2.4G
-dongle/receiver product (`260D:0042`) unrelated to this protocol — only
-`0101` is this keyboard.
+dongle/receiver product (`260D:0042`) — only `0101` is this keyboard, but
+`0042` is not unrelated to this project: it is a second, separate device
+this project also talks to for one read-only query, `CLASS_DEVICE`'s
+wireless status, covered in its own section below.
 
 The official Dareu web driver's device profile for this PID says:
 
@@ -674,22 +691,118 @@ Decoded from `ek75/data/0101.json`'s `default-fn-function-Id` fields against
 `FUNCTION_INDEX` in `docs/vendor-reference/device.js`. Only three of the 83
 keys carry a lighting function on this model:
 
-| Shortcut | `FUNCTION_INDEX` | What it does |
-|----------|------------------|--------------|
-| `Fn` + `[` | 53 `LightingModeV2` | cycles the effect |
-| `Fn` + `]` | 55 `LightingColorAdjustV2` | cycles the colour |
-| `Fn` + `Space` | 54 `BrightnessAdjust` | cycles the brightness |
+> ⚠️ **The table below is the vendor profile's answer, and on this unit it is
+> wrong.** It is kept because it is what `0101.json` says, and because the
+> reasoning it led to is worth not repeating. The **measured** map — read from
+> the keyboard with `open-ek75 keys` — is under "The device profile disagrees
+> with the keyboard — 23 times" in `CLASS_KEY` below, and that one is
+> authoritative.
 
-**There is no key bound to `LightingSpeed` (48) or `LightingDirection` (49)**
-on this keyboard, which matters for how the remaining unknowns can be
-confirmed: `open-ek75 watch` can observe what the firmware does to `effect`,
-`colors` and `brightness` on its own, but `flag` and `speed` have to be
-written and looked at. Do not plan a "watch the Fn key" experiment for those.
+| Shortcut | `FUNCTION_INDEX` | What it does | Measured on this unit |
+|----------|------------------|--------------|-----------------------|
+| `Fn` + `[` | 53 `LightingModeV2` | cycles the effect | ❌ plain `[` |
+| `Fn` + `]` | 55 `LightingColorAdjustV2` | cycles the colour | ✅ correct |
+| `Fn` + `Space` | 54 `BrightnessAdjust` | cycles the brightness | ❌ plain `Space` |
 
-Observed with `watch` on region 1: pressing `Fn` + `[` moved the effect from
-`Static` to `Neon` and the colour list from `[(255, 0, 0)]` to `[]` — the
-firmware clears the colours for an effect it colours itself, which corroborates
-treating `Neon` as a colourless effect in the UI.
+**What this section used to conclude — that no key is bound to `LightingSpeed`
+(48) — was false**, and it cost an experiment. `Fn`+`←`/`→` are bound to it;
+the profile simply does not show it. `Speed` was settled by watching after all
+(see "`Speed` is 1-3"). What survives is `LightingDirection` (49): no key binds
+it on this unit, and that is now measured rather than inferred.
+
+Observed with `watch` on region 1: pressing the effect-cycling shortcut moved
+the effect from `Static` to `Neon` and the colour list from `[(255, 0, 0)]` to
+`[]` — the firmware clears the colours for an effect it colours itself, which
+corroborates treating `Neon` as a colourless effect in the UI. *This
+observation was originally written as "`Fn` + `[`", naming the key from the
+profile rather than from the keyboard; the key that actually cycles the effect
+here is `Fn`+`\` (or `Fn`+`R-Alt`). The observation stands — what the firmware
+did is what was watched — only the key's name in it was wrong.*
+
+## Under sustained traffic, reads trail the keyboard's real state
+
+**Writes are never lost. Reads lag.** That sentence is the whole finding, and an
+earlier version of this section got it wrong in a way worth keeping on the
+record, because the wrong version pointed at the wrong fix.
+
+### What was first written here, and why it was wrong
+
+The first draft said *"a read right after a write can be stale"*, with a table
+of delays between the write and the read. It came from a real, deterministic
+experiment — the numbers reproduce exactly — but the conclusion drawn from it
+did not survive being attacked:
+
+- An **isolated** write followed by an immediate read, with the bus quiet
+  beforehand, is correct **30 times out of 30**. The write→read gap is not the
+  variable.
+- Adding three extra reads per iteration made the *first* read correct 20 times
+  out of 20, even though that read still happened ~9 ms after the write.
+
+A fix built on the first draft would have been a delay before every read: it
+would have cost latency on every screen in the GUI and fixed nothing, because
+the gap it lengthened was never the problem.
+
+### What the variable actually is
+
+Sustained back-to-back command traffic. In a loop that writes and reads with no
+pause, the keyboard's replies trail its real state, and the trailing shrinks as
+the loop slows down. Measured on region 1, alternating `Static` and `Wave`, with
+a uniform pause between *every* command:
+
+| Pause between commands | Reads returning an earlier state |
+|---|---|
+| 0 ms | 8 / 16 |
+| 10 ms | 8 / 16 |
+| 20 ms | 7 / 16 |
+| 40 ms | 5 / 16 |
+| 80 ms | 0 / 16 |
+
+The error is never garbage — it is a *coherent, earlier* state, which is the
+kind that gets believed.
+
+### Writes are safe, and this was tested directly
+
+Three bursts of 24 rapid alternating writes, each ending on a known effect, each
+read back after the traffic stopped: the final state matched the last write
+every time. Nothing is dropped, nothing is corrupted, nothing needs retrying.
+`restore` and `restore_key_map` land what they send — the 166-assignment restore
+verified with 0 divergences is the same result at a larger scale.
+
+### How long the keyboard needs to catch up
+
+After a burst of 24 commands, reading the effect back:
+
+| Quiet time after the burst | First read wrong |
+|---|---|
+| 0 ms | 4 / 8 |
+| 50 ms | 4 / 8 |
+| 100 ms | 0 / 8 |
+| 200 ms | 0 / 8 |
+| 300 ms | 0 / 8 |
+
+**100 ms of quiet is enough.** This is the number any fix should be built on.
+
+### Where it actually bites
+
+It is narrower than it first looked. A GUI that writes one value and refreshes
+is the isolated case, which is correct. What is not correct is reading right
+after a *burst* — which is exactly how it was found: `open-ek75 restore` twice
+in a row, then `open-ek75 regions`, reported the state from the run before.
+Every command was acknowledged and nothing errored.
+
+So the rule for this codebase is: **after a run of commands, be quiet for
+100 ms before reading.** Not "wait before every read".
+
+That rule is `device.SETTLE_AFTER_BURST` (150 ms — the measured 100 plus a
+margin that is a judgement call, not a measurement) and `device.settle()`, which
+`Session.restore` and `Session.restore_key_map` call in a `finally` once per
+burst. Counted on commands *attempted*, not acknowledged: `command_process`
+sends before it polls, so a call that raised still put bytes on the wire, and an
+aborted burst is precisely when the caller reads next.
+
+Verified by re-running the scenario that exposed it — two restores then a read,
+six times: 0 wrong, where it had failed roughly one run in three. The cost on a
+166-assignment key-map restore is 17.3 s to 17.5 s.
 
 ## Two grades of confirmation
 
@@ -729,6 +842,93 @@ wrote flag=1 speed=3 -> read back flag=1 speed=3
 ```
 
 So the bytes are accepted and persisted, not silently dropped.
+
+### `Speed` is rendered — the one field of the three that is
+
+**Confirmed visually.** With everything else held identical — same effect
+(`Wave`), same empty colour list, same brightness, same `flag` — only the speed
+byte was changed, 1 then 3, and a human watched:
+
+    speed=1  ->  the wave runs
+    speed=3  ->  clearly and obviously faster
+
+That closes the last of the three fields in `LED_CMD_EFFECT` whose rendering was
+unknown, and the three did not come out the same way:
+
+| Field | Stored by the firmware | Drawn | Seen on |
+|---|---|---|---|
+| `Speed` | yes | **yes** | region 1, `Wave` |
+| `Flag` (direction) | yes | no | region 1, `Wave`, twice |
+| `colors[1..4]` | yes | no | region 1, `Static` and `Wave` |
+
+Every row is one region and one or two effects. `Wave` is the effect all three
+were tested on because it is the only one the vendor gives a direction control
+and the only animated one with an obvious pace — not because it is
+representative of the other seventeen.
+
+Three fields, one packet, one round trip each saying "stored" — and three
+different answers to the only question that matters to a user. It is the
+clearest argument in this file for why "the firmware acknowledged it" is not a
+result, and why each of these needed its own look by a person.
+
+For `Speed` the range had already been settled without writing anything, by
+watching the firmware walk its own value under `Fn`+`←`/`→` (see "`Speed` is
+1-3"). That proved which numbers are legal. This proves they do something.
+
+### The colour list is used by some effects, over time — not across the keys
+
+This section said the opposite for one commit, and the way it was wrong is the
+useful part.
+
+**First conclusion, from looking at two effects:** `Static` with red+green+blue
+showed all red, and `Wave` with the same three showed all red sweeping. Both
+were read back byte-identical first, so the firmware was storing the list and
+appeared to be drawing only `colors[0]`. It was written up as a confirmed
+negative, scoped to those two effects — and review pointed out the hole: an
+effect cycling the list **over time** would look like one colour in any single
+glance. That was the right question and the answer is yes.
+
+**`Breathing` cycles the list.** Two colours alternate between breaths; three
+go red, green, blue and repeat. Watched over several cycles rather than glanced
+at, which is the only way this is visible.
+
+So the list is not decoration and the distinction is not spatial-versus-nothing,
+it is **which effect**:
+
+| Effect | Colours drawn | How |
+|---|---|---|
+| `Breathing` (2) | the whole list | one per breath, in order, looping |
+| `Static` (1) | `colors[0]` only | nothing to animate |
+| `Wave` (5) | `colors[0]` only | the sweep is one colour |
+
+### The vendor has a table for this, and it agrees
+
+`OEMDriver.Pages.PageLedTg::CheckCustomColorCount(effect, count)` in the Windows
+app — the `Tg` page is this chip family's — reduces to:
+
+    effect in (1, 4, 9, 20, 21, 22, 132)  ->  1
+    effect == 11 (Starlit)                ->  at most 2
+    effect == 2  (Breathing)              ->  at most 2
+    anything else                         ->  1
+
+`PageLedWs`, `PageLedQf` and `PageLedJm` carry the identical method, so it is a
+framework-wide rule rather than something special to this model.
+
+It predicts every observation above without having been consulted first:
+`Static` 1 (listed), `Wave` 1 (the default branch), `Breathing` more than 1.
+Three agreements between a table read out of a binary and a human looking at a
+keyboard. `Starlit` (11) is the table's other multi-colour effect and has not
+been looked at.
+
+**Where they disagree: the firmware is more capable than the vendor's UI.** The
+app caps `Breathing` at two colours. This keyboard cycled three, in order. The
+cap is the application's, not the hardware's — the same shape as `MAX_COLORS`
+being the app's refusal to send a sixth rather than a firmware limit.
+
+`ek75/core/protocol.max_colors_for()` encodes the vendor's table because it is
+the only per-effect rule anyone has, and the GUI offers a colour list only for
+the effects on it. Where the firmware turns out to allow more, that is recorded
+here rather than assumed for effects nobody has watched.
 
 ### ...but `Flag` does not visibly do anything on this model
 
@@ -878,27 +1078,1038 @@ the cable and power-cycling the keyboard — unlike, e.g., a HyperX SoloCast's
 mute state, there is no daemon or boot-time script needed here. A single
 successful `set` command is permanent.
 
+## `CLASS_POWER` (7) — battery and the idle timer
+
+Implemented **read-only**. Both reads were transcribed from `tgdevice.js` and then
+answered by the real keyboard, so the values below are what the device returned.
+
+```
+CLASS_POWER_CMD_LIST
+  0 PWR_CMD_BAT_STATUS    <- implemented (read)
+  1 PWR_CMD_TIME_2_DIM        this keyboard does not answer it
+  2 PWR_CMD_TIME_2_SLEEP  <- implemented (read); the write is deliberately absent
+  3 PWR_CMD_LOW_INDICATOR_CTRL
+  4 PWR_CMD_MAX_LED_BRIGHTNESS
+  5 PWR_CMD_ADC
+  6 PWR_CMD_USB_TIME_2_SLEEP  reads Control=0 while on the cable
+```
+
+### `PWR_CMD_BAT_STATUS` (read)
+
+Request: `HDR_SIZE = 3`, class 7, command `0 | GET_CMD`. **`HDR_PROFILE` is not
+written** — the vendor driver sets four header fields and stops, which makes sense:
+charge is a property of the keyboard, not of a profile. This is the third builder in
+this repo that sends profile 0, each for its own reason.
+
+```
+byte 6   Status        raw; the value set is not documented anywhere seen here
+byte 7   Level
+byte 8   MaxLevel
+byte 9   Critical      raw
+```
+
+Read from this keyboard, plugged in: `Status=1 Level=100 MaxLevel=100 Critical=0`.
+
+`parse_battery_status_response` derives a percentage from `Level / MaxLevel` rather
+than assuming a 0-100 scale, and returns `None` for it when `MaxLevel` is 0. `Status`
+and `Critical` are passed through unnamed: guessing what `1` means would be inventing
+a meaning, and the GUI shows only the percentage for that reason.
+
+### `PWR_CMD_TIME_2_SLEEP` (read)
+
+Request: `HDR_SIZE = 3`, class 7, command `2 | GET_CMD`, **`HDR_PROFILE` set** — the
+vendor driver writes `D[HDR_PROFILE] = A.ProfileId`, so the idle timeout is stored per
+profile.
+
+```
+byte 6   Control       0 = the timer is off
+byte 7-8 Second        big-endian; only read when Control != 0
+```
+
+Read from this keyboard, profile 1: `Control=1, Second=180`.
+
+**Units.** The wire carries **seconds**; the official software's slider and
+`TK51G0101.dll` (`MinSleepTime=3.0`, `MaxSleepTime=30.0`) are **minutes**. 180 s is
+exactly those 3 minutes, which is the minimum — the two agree.
+
+### Why `SetTimeToSleep` is not implemented
+
+Its bytes are known and unremarkable — same header, `SET_CMD`, `payload[0] = Control`,
+`payload[1..2] = Second` big-endian. It is left out on purpose:
+
+**The effect cannot be observed on the only connection this project supports.**
+Configuration works over the USB cable, and `PWR_CMD_USB_TIME_2_SLEEP` reads
+`Control=0` — the keyboard does not sleep while on the cable. A write could therefore
+be acknowledged, read back correctly, and never be seen to do anything. That reaches
+L3 on this project's ladder and can never reach L4.
+
+That is a weaker position than every other write here, and the rule in golden rule 2
+is not "send it and see" — so the bytes are recorded and the command is not shipped.
+Whoever implements it should say in the same breath how they intend to confirm it,
+and "the value read back" is not an answer to "does the keyboard sleep".
+
+## `CLASS_KEY` (1) — reading the key map
+
+Implemented **read-only**, via `KEY_CMD_ASSIGN`.
+
+    GetKeyAssign  HDR_SIZE=8, class 1, cmd 3|GET, HDR_PROFILE=profile
+      payload:    [0]=keyId  [1]=layer      0 = base, 1 = Fn
+      reply:      [2]=FunctionId  [3..7]=FunctionData (5 bytes)
+
+The reply has the same shape as the device profile's `default-function-Id` /
+`default-function-data` pair, so `ek75/core/keymap.py` decodes both with one
+function. Layer 0/1 meaning was not assumed: reading both back and matching them
+against the profile's base and Fn fields is what identifies which is which.
+
+Confirmed on hardware: **all 83 keys answered on both layers**, 166 reads in
+1.56 s, no failures. `KEY_CMD_BULK_ASSIGN` (8) exists and is not used — a second
+untested packet shape to save about a second is a bad trade.
+
+### `FunctionData` for `CombineKey` (6) is *two* fields, not one
+
+    data[0]  HID modifier bitmask
+    data[1]  Keyboard-page (0x07) usage
+    data[2..4]  zero on every assignment this keyboard reports
+
+Reading only `data[1]` costs nothing on an ordinary key and reports the **wrong
+key** on a combination: an assignment of Ctrl+C arrives as `[0x01, 0x06, 0, 0,
+0]` and gets described as "C". The modifier is not decoration, it is half of
+what the key does.
+
+The bit order is the standard USB HID boot-keyboard report's modifier byte, and
+this keyboard confirms it — its eight modifier keys read back on the base layer
+as exactly these single-bit values:
+
+| Bit | Value | Key on this model |
+|---|---|---|
+| 0 | `0x01` | `L-Ctrl` |
+| 1 | `0x02` | `L-Shift` |
+| 2 | `0x04` | `L-Alt` |
+| 3 | `0x08` | `L-Win` |
+| 4 | `0x10` | `R-Ctrl` |
+| 5 | `0x20` | `R-Shift` |
+| 6 | `0x40` | `R-Alt` |
+| 7 | `0x80` | *(no key — Right Win)* |
+
+A **bare** modifier — bitmask set, usage 0 — is a real assignment and worth
+naming in a full key listing. It is only uninteresting in an *Fn-shortcut*
+list, where "Fn+Shift is still Shift" is noise; that filter now lives in
+`keymap.is_bare_modifier`, asked for by the two shortcut builders, rather than
+inside the decoder where it silently applied to combinations too.
+
+### The data bytes of the lighting functions, as observed
+
+Listing the copyable assignments for the GUI's remap page put them side by side,
+which is the first time their data bytes could be compared. Read from this
+keyboard:
+
+| Shortcut | FunctionId | data |
+|---|---|---|
+| `Fn`+`↑` | 54 Cycle brightness | `[4, 0, 0, 0, 0]` |
+| `Fn`+`↓` | 54 | `[4, 0, 1, 0, 0]` |
+| `Fn`+`=` | 54 | `[1, 0, 0, 0, 0]` |
+| `Fn`+`-` | 54 | `[1, 0, 1, 0, 0]` |
+| `Fn`+`→` | 48 Lighting speed | `[0, 0, 0, 0, 0]` |
+| `Fn`+`←` | 48 | `[0, 1, 0, 0, 0]` |
+| `Fn`+`\` | 53 Cycle effect | `[1, 1, 0, 0, 0]` |
+| `Fn`+`R-Alt` | 53 | `[4, 1, 0, 0, 0]` |
+| `Fn`+`]` | 55 Cycle colour | `[1, 1, 0, 0, 0]` |
+| `Fn`+`F12` | 45 Win/Mac layout | `[2, 0, 0, 0, 0]` |
+| `Fn`+`L-Win` | 47 Lock the Windows key | `[2, 0, 0, 0, 0]` |
+| `Fn`+`~` | 46 Show battery level | `[0, 0, 0, 0, 0]` |
+
+The pairs that differ only in their direction differ in **one byte**, and not
+the same byte: brightness in `data[2]` (0 up, 1 down), speed in `data[1]`.
+`data[0]` varies between pairs that do the same thing (`Fn`+`↑` is 4 where
+`Fn`+`=` is 1), so it is plainly not the direction.
+
+**No meaning is claimed for any of this.** It is recorded because it is what the
+device reports, and because the alternative — a UI offering "Cycle brightness"
+four times with no way to tell the entries apart — is what made it visible. The
+remap page sidesteps the question entirely by copying the whole five-byte value
+and labelling it with the key it came from, so a user picks "what `Fn`+`↑`
+does" without anyone having to know why it is a 4.
+
+### How an unnamed `FunctionId` gets found
+
+Read both layers and look for rows that fall through to the raw `fid=NN`
+fallback. That is how `Fn`+`L-Win` turned up as function id **47** — an
+assignment **the device profile does not contain at all**, so no amount of
+checking against `0101.json` could have surfaced it. The vendor's index in
+`docs/vendor-reference/device.js` names 47 `LockWin`, between
+`ShowBatteryLevel` (46) and `LightingSpeed` (48), both of which this project
+already trusts from that same list.
+
+After adding it, all 166 assignments on this unit decode to a name and none
+falls through.
+
+### The device profile disagrees with the keyboard — 23 times
+
+This is the most useful thing learned here, and it is a warning about every
+other use of `ek75/data/0101.json`.
+
+Sweeping the whole map and comparing it against the profile found **23
+assignments that differ**. The divergence is systematic rather than random:
+
+```
+Fn + W A S D    profile: mouse cursor        keyboard: ordinary keys
+Fn + Z X C V    profile: mouse buttons       keyboard: ordinary keys
+Fn + [          profile: cycle effect        keyboard: the "[" key
+Fn + Space      profile: cycle brightness    keyboard: Space
+Fn + Delete     profile: Windows/Mac layout  keyboard: Delete
+Page Down       profile: HID 75 (Page Up)    keyboard: HID 77 (End)
+```
+
+The entire mouse-emulation block is absent from this keyboard. The most likely
+explanation is that `0101.json` describes a **different variant behind the same
+PID** — Dareu's profile for `0101`, not Husky's Nomadic specifically.
+
+**What the keyboard actually binds for lighting**, none of which the profile
+gets right:
+
+| Function | Keys |
+|---|---|
+| `BrightnessAdjust` (54) | `Fn`+`↑` `Fn`+`↓` `Fn`+`-` `Fn`+`=` |
+| `LightingSpeed` (48) | `Fn`+`←` `Fn`+`→` |
+| `LightingModeV2` (53) | `Fn`+`\` `Fn`+`R-Alt` |
+| `LightingColorAdjustV2` (55) | `Fn`+`]` |
+
+**This corrects an earlier claim in this file.** The Fn-shortcut section above
+was derived from the profile and said this keyboard has no key bound to
+`LightingSpeed` (48), so `Speed` could not be settled by watching the firmware
+change its own state. That was wrong: `Fn`+`←`/`→` are exactly that, and the
+experiment is available after all. What survives is the conclusion about
+`LightingDirection` (49) — **no key binds it**, and that is now measured rather
+than inferred from a source that turned out to be unreliable.
+
+The consequence for the code: **the keyboard is the authority.** The GUI reads
+the map from the device and lists nothing when none is connected, rather than
+falling back to a profile known to be wrong for this unit. `open-ek75 keys
+--diff` prints the divergence for any unit.
+
+### `SetKeyAssign` — implemented, and how it was proven
+
+    SetKeyAssign  HDR_SIZE=8, class 1, cmd 3|SET, HDR_PROFILE=profile
+      payload:    [0]=keyId [1]=layer [2]=FunctionId [3..7]=FunctionData
+
+Byte-identical to `GetKeyAssign` in the header; only the command byte and the
+three extra payload fields differ. That matters for the risk analysis: payload
+[0] and [1] were **already proven** to address the right key, because the GET
+uses the same two offsets and returned the right key's data 166 times out of
+166. Only [2] and [3..7] were unproven.
+
+This project earlier stated that implementing this was circular — that
+`restore` could not be the way back for the very command it is built from. That
+was correct and it is what this section had to answer before any byte was sent.
+
+#### The way back is not this project's code
+
+    Fn + Esc  ->  function id 44, Factory reset
+
+The firmware binds it. Read from the live key map, not from the vendor profile.
+It runs on the keyboard, travels over no bus, and does not care whether
+`SetKeyAssign` is broken — which is exactly what `restore` cannot claim. A
+factory reset also clears the lighting configuration; that half already has a
+confirmed `backup`/`restore`, so the recovery order is **Fn+Esc, then
+`open-ek75 restore`**.
+
+It has not been pressed. Testing the escape hatch means performing the
+destructive act it exists to undo. Dareu's WebHID tool at `dr.dareu.com` is the
+second hatch, and the one that requires trusting nothing in this repository.
+
+#### The validation ladder, as actually run
+
+Every step below was run on hardware, in this order, with the full 166-entry
+map already saved to disk first.
+
+1. **Byte-match test** against `tgdevice.js`.
+
+2. **The identity write.** Write one key's *existing* bytes back to it
+   (`Fn`+`[`, key id 50, layer 1, `fid=6 data=[0,47,0,0,0]`), then re-read the
+   **whole map** and diff it. Result: ACK, **0 of 166 changed**.
+
+   What this proves and what it does not: it proves the firmware parses and
+   accepts a packet of this class, command, size and shape, and — via the wide
+   diff — that the write did not land on some *other* key. It does **not**
+   prove the write path executed at all: firmware commonly skips a flash write
+   when the payload already matches. A narrow re-read of the one key would have
+   proven even less, which is why the diff is over all 166.
+
+3. **Two round trips on one expendable assignment.** `Fn`+`[` was chosen from
+   the live map: it is on the Fn layer (the base `[` is never touched), and it
+   is one of the 45 Fn assignments that are pure passthrough — it does nothing
+   a user would miss. *An earlier draft named `Scroll Lock`; this is a 75%
+   board and has no such key. Naming a key that does not exist is how a "safe
+   test" becomes a packet aimed at an id nobody checked.*
+
+   | Write | Read back | Collateral in the other 165 |
+   |---|---|---|
+   | `fid=6 data=[0,71,0,0,0]` (Scroll Lock, a key this board lacks) | exact | 0 |
+   | `fid=8 data=[0,183,0,0,0]` (MediaKeys, consumer Stop) | exact | 0 |
+   | revert to `fid=6 data=[0,47,0,0,0]` | exact | 0 |
+
+   Trial A moves only the data bytes; trial B also moves `FunctionId`. Between
+   them, offsets [2] and [3..7] are each confirmed by a change that produced
+   exactly the requested read-back. Final whole-map diff against the
+   pre-experiment capture: **0 changed**.
+
+4. **The full restore.** `restore --keys-only` wrote all 166 assignments:
+   166/166 acknowledged, and a whole-map diff against the original capture
+   showed 0 divergences. It takes **~17 s** — roughly 100 ms per write, against
+   ~9 ms per read. A key-map restore is not instant and the UI must not pretend
+   it is.
+
+#### What is deliberately still missing
+
+There is no way to choose a *new* assignment — no remap command, no picker.
+The only bytes this write can send are bytes read back from the same keyboard.
+Selecting new functions is the next slice, and it is a UI problem (naming 57
+function ids and the HID usage tables) rather than a protocol one.
+
+## `CLASS_PROFILE` (5) — how many profiles, and which one is live
+
+Implemented **read-only**. The official Windows app offers Profile 1 / 2 / 3;
+this section is the half of that feature which can be proven without writing.
+
+    PFL_CMD_ID_LIST  0   implemented (read)
+    PFL_CMD_CREATE   1   write, persistent, its undo is untested
+    PFL_CMD_DELETE   2   the undo for CREATE, itself untested
+    PFL_CMD_ACTIVE   3   implemented (read); the SET is not
+    PFL_CMD_NAME     4   no GetProfileName exists in the vendor source
+    PFL_CMD_RESET    5   write, destroys a profile's contents
+
+### `GetProfileIdList` — a multi-packet read, profile 0
+
+    GetMultiPacketCmd(profileId=0, class=5, cmd=PFL_CMD_ID_LIST|GET, args=null)
+
+Same machinery as `LED_CMD_ID_LIST`, same ProfileId 0 — asking which profiles
+exist is not a question about one of them. It needed no new transfer code.
+
+**Its post-processing is not the same, and this is the trap.** The LED list
+collapses region ids 0 and 1 into whichever appears first; `GetProfileIdList`
+ends with `ProfileList = new Uint8Array(DataArray)` and filters nothing.
+Decoding the profile list by analogy with its sibling — the obvious move, since
+both are multi-packet id lists — would silently swallow a profile. A test
+asserts the two parsers disagree on one shared input.
+
+### `GetActiveProfileId` — the answer arrives in the header
+
+    HDR_SIZE=0, class 5, cmd 3|GET, HDR_PROFILE **not written**
+      reply: profile id at HDR_PROFILE (byte 4), not at PAYLOAD_BASE
+
+Both zeros on the way out are load-bearing: the request carries no payload for
+`HDR_SIZE` to describe, and asking *which* profile is active cannot take a
+profile id as input. Note the zero size is **not** shared with
+`GetBatteryStatus`, the other profile-less read here — that one sets
+`HDR_SIZE=3`. The two resemble each other in the profile byte only, which is
+the kind of half-resemblance that gets a 3 written by analogy.
+
+**Confirmed on hardware, with one honest limit.** The reply came back as:
+
+```
+02 00 05 83 01 00 01 00 ...
+      ^  ^  ^     ^
+      |  |  |     └─ byte 6, PAYLOAD_BASE — the same 01
+      |  |  └─ byte 4, HDR_PROFILE — the byte the vendor driver reads
+      |  └─ byte 3, command 0x83 = PFL_CMD_ACTIVE | GET_CMD
+      └─ byte 2, class 5 = CLASS_PROFILE
+```
+
+This keyboard puts the id in byte 4 **and** byte 6, so it cannot tell the
+header reading from the payload reading apart. The vendor driver is the only
+reason to prefer the header — which is reason enough — but this is not a
+confirmed byte position. A sibling model with only one of the two filled in is
+what would settle it.
+
+### What the keyboard actually answers
+
+```
+profiles: [1]   active: 1
+```
+
+**One profile, and it is the active one.** This project previously stated "this
+code always uses profile 1" with nothing behind it; now it is measured. The
+consequence for the feature the owner asked for: Profile 2 and 3 are not
+hidden, they do not exist *on the device*. Creating one there needs
+`PFL_CMD_CREATE`, a persistent write whose only undo, `PFL_CMD_DELETE`, has
+never been sent to this hardware either.
+
+That is not the same as saying the feature needs it. The next section is the
+investigation into exactly that question, and its answer is that the
+user-facing "Profile 1/2/3" is reachable with no device write at all — read it
+before treating `PFL_CMD_CREATE` as the way in.
+
+### Creating profiles 2 and 3: what the investigation found
+
+Asked to look without writing anything. The answer reframes the feature.
+
+**Nothing in the vendor's web driver creates a profile.** Counting definitions
+against call sites in `tgdevice.js` — which is a device-communication library,
+so read the limits of that on the next page before leaning on it:
+
+| Command | Defined | Called |
+|---|---|---|
+| `GetProfileIdList` | 1 | 2 |
+| `GetActiveProfileId` | 1 | 2 |
+| `SetActiveProfileId` | 2 | 1 |
+| `CreateProfile` | 1 | **0** |
+| `DeleteProfile` | 1 | **0** |
+| `ResetProfile` | 1 | **0** |
+
+The three writes exist in the HID layer and nothing in the driver invokes them —
+the same pattern as `MCO_CMD_SOTRAGE_INFO` and `MCO_CMD_MINI_DELAY`. The driver
+reads whatever profiles the firmware ships with and switches between them. On
+this keyboard that is one.
+
+**How far that evidence actually reaches.** `tgdevice.js` is the device layer,
+not the whole application: the site's UI code is not among the files in
+`docs/vendor-reference/`, and it is where the macro *encoder* turned out to live
+too. So the honest claim is "the driver's own orchestration never creates a
+profile", not "nothing anywhere does". What makes it more than nothing is that
+the sibling calls *are* here — `GetProfileInfo` calls `GetProfileIdList` and
+`GetActiveProfileId`, and `TgKeyboard.SetActiveProfileId` wraps the setter — so
+profile orchestration as a whole does live in this file, and creation is absent
+from it.
+
+Their packets are trivially known and identical in shape, which was never the
+difficulty:
+
+    CreateProfile / DeleteProfile / ResetProfile
+      HDR_SIZE=0, class 5, cmd 1|SET / 2|SET / 5|SET, HDR_PROFILE=target
+
+The difficulty is semantics, and there is **no reference flow to copy**: nothing
+says whether creating switches the active profile, whether a new profile starts
+empty or cloned, or what `DELETE` does to the one that is active. Sending them
+would be guessing four answers at once with "the keyboard stops typing" as the
+failure mode.
+
+### "Profile 1 / 2 / 3" in the Windows app is a list on the PC — settled
+
+This was left as "probably" and flagged as the one piece of work that would turn
+it into an answer: the Windows app is a *second, independent* implementation and
+could create device profiles through its own HID layer. It was checked, and it
+does not.
+
+`Central de Controle Husky.exe`, `DeviceBase.dll` and `Products/TK51G0101.dll`
+were walked instruction by instruction (`dnfile` + `dncil`), resolving the
+operand of every `call`/`callvirt` so the question is about edges rather than
+about names appearing in metadata:
+
+- **`DareuProducts.DeviceBase::CreateProfile` is `ldnull; ret`.** The base
+  implementation returns null and does nothing. It is a virtual stub.
+- **`DareuProducts.TK51G0101::CreateProfile`** — the override for *this exact
+  model* — is a local object factory:
+
+      newobj .ctor
+      ldsfld s_profileDefault
+      callvirt CopyFunctionParam
+
+  It constructs a profile in memory and copies the embedded default into it.
+  There is no packet, no HID call, nothing that reaches the keyboard.
+  `s_profileDefault` is `DefaultProfile.xml`, the resource discussed above.
+- **`DeleteProfile` is not overridden for this product at all.**
+- The call sites are UI code: `OEMDriver.Pages.PageProfileConfig::
+  ProfileOperationCopy` and `ProfileOperationImport`, working on an
+  `ObscProfiles` observable collection through `get_Count` and `get_Name` — a
+  list bound to a window, not a device.
+
+So **both** vendor implementations agree, for different reasons: the web driver
+defines the three `CLASS_PROFILE` writes and calls none of them, and the Windows
+app's `CreateProfile` for this PID never leaves the PC. Profile 1/2/3 is an
+application-side list, seeded from the factory template, applied to the one
+device profile this keyboard has.
+
+⚠️ **On trusting this kind of negative.** The first version of the script that
+produced it found no call sites for *anything*, including `ToString` — its
+reader did not implement dncil's interface and every failure was swallowed by a
+bare `except`. It was caught by running it against a name that had to be there.
+A tool that cannot find a positive cannot report a negative, and the control run
+is part of the evidence: 3383 method bodies read, 0 failed, 52 `ToString` call
+sites found.
+
+### The safe way to ship this feature
+
+Named local profiles — **implemented**: `core/profiles.py`, `open-ek75
+profiles`, and the GUI's Profiles page. Several `backup`-format files, the user
+picks one, applied through the existing `restore` path. Zero new device writes, zero new
+packet shapes — and now known to be **what the vendor's own app does**, rather
+than merely a safe substitute for it.
+
+`PFL_CMD_CREATE` stays unsent. Not out of caution about an unknown any more, but
+because nothing known uses it: two independent vendor implementations both
+decline to, and this keyboard reports one profile because that is how many it
+has.
+
+What it would NOT give: switching profiles with a key on the keyboard, which
+needs a real device profile and therefore `PFL_CMD_CREATE`. Nobody should send
+that byte without a captured reference from the real Dareu software — the same
+standard `CLASS_DFU` is held to, for the same reason: there is no way back that
+does not depend on the thing being tested.
+
+### What is deliberately not implemented
+
+`SetActiveProfileId` is the interesting near-miss. Unlike CREATE it is
+*reversible* — switch back — so it is the natural next write to validate. It is
+still pointless until a second profile exists, and it is still a byte this
+hardware has never been sent. Both reasons have to stop applying, not one.
+
+## `CLASS_MACRO` (6) — reading what is stored
+
+Implemented **read-only**, and it turned up something the project did not
+expect: **this keyboard has a macro on it.**
+
+    GetMacroIdList  GetMultiPacketCmd(profile=0, class=6, cmd=1|GET, args=null, width=1)
+                    -> DataArray with every zero dropped
+
+    GetMacroData    GetMultiPacketCmd(profile=0, class=6, cmd=5|GET,
+                                      args=[macroId], width=2)
+                    -> DataArray, verbatim
+
+The device profile `0101.json` does not contain the word "macro", so the profile
+would have said this keyboard has no macros. It has one, and only the keyboard
+knows — the same lesson as the 23 key-map divergences, from a different class.
+
+### Three id lists over one transport, decoded three ways
+
+    LED_CMD_ID_LIST   collapses ids 0 and 1 into whichever appears first
+    PFL_CMD_ID_LIST   filters nothing at all
+    MCO_CMD_ID_LIST   drops every zero
+
+Same command family, same multi-packet transport, three different rules in the
+vendor's own driver. This is the clearest argument in the project against
+porting one of these by analogy with its neighbour; a test asserts all three
+disagree on one shared input rather than describing the difference in prose.
+
+### `GetMacroData` exercises a transport combination nothing else does
+
+It is the only command here that passes `GetMultiPacketCmd` an **argument** and
+uses a **two-byte** length. The id sits at `PAYLOAD_BASE`, and the Total and
+Offset fields the chunk requests add follow it, two bytes each, big-endian:
+
+    00 | 35 | 06 | 85 | 00 | 00 | 03 | 00 64 | 00 00
+                                     id   total   offset
+    HDR_SIZE = chunk + args + 2*width = 48 + 1 + 4 = 53
+
+Confirmed on hardware, which was not expected — the plan for this slice assumed
+a keyboard with no macros would leave the combination untestable, and said so.
+
+### What is stored, and what it decodes to
+
+```
+macros:   [1]
+          1: 27 bytes  04 e0 0a 80 05 e0 0b 09 5e 04 e0 0a 6d
+                       05 e0 0b 07 9d 04 e0 0a 5f 05 e0 0b 04 71
+```
+
+**Decoded.** The web driver passes macro data straight through — `SetMacroData`
+hands its argument to `SetMultiPacketCmd` untouched — and the code that *builds*
+it lives in the site's UI layer, outside `docs/vendor-reference/`. It was
+recovered instead from the Windows app's recording page,
+`OEMDriver.Pages.PageMacroTg::ParseKeyboardData`, walked instruction by
+instruction. It is a TLV opcode stream:
+
+    0x04 <usage>                 key down
+    0x05 <usage>                 key up
+    0x0A <ms>                    delay, 1 byte (0-255)
+    0x0B <ms hi><ms lo>          delay, 2 bytes big-endian (0-65535)
+    0x0C <hi><mid><lo>           delay, 3 bytes big-endian (0-16777215)
+    0x0D <min hi><lo><max hi><lo> random delay, 2+2 bytes big-endian
+
+`<usage>` is a real USB HID Keyboard-page usage, confirmed independently:
+`RawInputDataArrived` runs every captured key through `VirtualKeyCorrection`
+then `ASCallToUsageId` before it ever reaches the parser above — the same
+public table `keymap.HID_KEYS` already carries. Modifiers are spelled out as
+their own usages, `0xE0`-`0xE7` — a *different* encoding from `CLASS_KEY`'s
+`CombineKey`, which packs them into a `data[0]` bitmask instead. Two encodings
+for the same physical key, in two corners of one protocol.
+`keymap.HID_MODIFIER_USAGES` is that table; `keymap.describe_macro_usage`
+checks it before falling through to `HID_KEYS` for an ordinary key.
+
+Decoding this keyboard's 27 bytes with that table consumes all of them, with
+nothing left over:
+
+    KEYDOWN Left Ctrl -> wait 128ms -> KEYUP -> wait 2398ms
+    KEYDOWN Left Ctrl -> wait 109ms -> KEYUP -> wait 1949ms
+    KEYDOWN Left Ctrl -> wait  95ms -> KEYUP -> wait 1137ms
+
+Three taps of Left Ctrl a couple of seconds apart — an anti-idle macro.
+`protocol.parse_macro_steps` implements the table above and
+`keymap.format_macro_steps` turns its output into the lines `probe` and the
+GUI's Macros page both print — one shared function, so the two front ends
+cannot show different words for the same bytes.
+
+**Confidence is not uniform across the six opcodes.** `0x04`/`0x05`/`0x0A`/
+`0x0B` are confirmed against this keyboard's real 27 bytes. `0x0C` and `0x0D`
+are read only from the encoder's IL and have never been seen in a real macro —
+tested here from hand-built bytes, not device data, and the test docstrings say
+so.
+
+`protocol.build_macro_steps` is the inverse, pure logic with no I/O and
+nothing sent to a keyboard. Its strongest oracle is this keyboard's own
+27-byte macro: decoding then re-encoding it reproduces those exact bytes,
+touching opcodes `0x04`/`0x05`/`0x0A`/`0x0B` — the same four this project has
+ever seen in real device data. `0x0C` and `0x0D` are checked by a second,
+weaker test: encoding a hand-written step list and decoding the result
+reproduces the same list. That is internal consistency between this project's
+own encoder and decoder, not confirmation against the vendor's format — no
+real macro has ever exercised either opcode, a limit already on record above.
+It also picks the smallest delay opcode that fits (1/2/3 bytes), matching what
+`ParseKeyboardData` itself does rather than always emitting the largest form.
+
+An earlier draft of this section guessed the bytes were length-prefixed records
+(27 = 4+5+4+5+4+5, each group's first byte equal to its own length); that was
+arithmetic on a coincidence, not a decode, and it is wrong. `docs/investigations
+/macros.md` keeps the wrong guess on the record next to the correction.
+
+### Deliberately not ported
+
+- **`MCO_CMD_SOTRAGE_INFO` (0)** and **`MCO_CMD_MINI_DELAY` (6)** appear exactly
+  once each in `tgdevice.js` — inside the enum that declares them. The vendor's
+  own driver never sends either, so there is no reference packet and building
+  one would be guessing.
+- **`GetMacroName` (`MCO_CMD_NAME|GET`)** exists and the vendor **discards the
+  reply**: it reads, ignores the result on both the success and the failure
+  path, and returns the synthesised string `` `Macro ${id}` ``. Porting a read
+  whose own author does not trust its output is guessing with extra steps. The
+  GUI shows `Macro N` for exactly the reason the vendor does, and says so.
+
+### `MCO_CMD_MEMORY|SET` — implemented, and confirmed on hardware
+
+`SetMultiPacketCmd`, unlike `LED_CMD_FRAME`'s transport, is not a dead enum
+entry: `tgdevice.js` implements it in full and `SetMacroData` uses it. Port
+is `protocol.build_set_multipacket_chunk` (the write-side sibling of
+`build_multipacket_chunk`) and `device.set_multipacket` (the write-side
+sibling of `get_multipacket`) — same Total/Offset-at-`PAYLOAD_BASE` scheme,
+`SET_CMD` instead of `GET_CMD`, the chunk's bytes embedded in the request
+rather than read back from a reply. Empty data sends nothing, matching the
+vendor's own `for(...;I>0;)` loop shape exactly.
+
+`Session.write_macro_data(macro_id, data)` is the service-layer entry point.
+
+**Confirmed on hardware, full ladder, on this keyboard's real macro 1:**
+
+    identity write (the same 27 bytes back)      -> ACK, read-back identical
+    content change (Left Ctrl 0xE0 -> 0xE1),
+      same 27-byte length, one usage byte changed -> ACK, read-back == the change
+    revert to the original 27 bytes               -> ACK, read-back identical
+
+This also answers a question raised before any byte was sent: whether the
+firmware requires a macro to have just been created before its content can be
+rewritten. It does not, at least for a same-length rewrite — `SetMacroData`
+alone, with no `MacroCreate` beforehand, was accepted and correctly reflected
+on an already-existing macro.
+
+**The way back**, same as every other write in this project: the exact 27
+bytes are on record above, in `docs/investigations/macros.md`, and in
+`tests/test_protocol.py` — `write_macro_data(1, those_bytes)` is the immediate
+recovery, proven to work by the identity write before the content change ever
+ran. `Fn`+`Esc`, the firmware's own factory reset, remains the documented
+fallback underneath that. This slice's narrow scope — content only, no
+create or delete — makes it less likely to be needed, not unnecessary.
+
+### Deliberately not ported (still)
+
+- **`MacroCreate` / `MacroDelete` / `SetMacroName`.** Not merely unvalidated —
+  the two vendor sources genuinely disagree on how creation is packaged. The
+  web driver's `MacroCreate(macroId, len)` takes no name; naming is a separate
+  `SetMacroName` call, UTF-8 (`TextEncoder`). The Windows app's
+  `WriteMemorryMacro` calls one combined `HidDevice.CreatMacro(id, namePtr,
+  nameLen, dataPtr, size)` — name and data in a single call, name as **UTF-16**
+  (`Unicode.GetBytes`, length compared as UTF-16 code units). Building either
+  from one source alone risks guessing at how the other actually sequences
+  them, which golden rule 2 forbids. Resolving this needs either a live USB
+  capture of the web driver creating a macro, or a second look reconciling the
+  two sources — not a guess between them.
+- **A GUI macro editor**, or changing a macro's *length*. Nothing is known
+  about whether the 27-byte figure for macro 1 is a property of a fixed
+  storage slot declared at creation, or something `SetMacroData` communicates
+  fresh every write — the identity/content-change tests above deliberately
+  never changed the byte count, so this remains untested.
+
+## `CLASS_DEVICE` (0) — the 2.4G dongle's wireless status — CONFIRMED ON HARDWARE
+
+Not a command against the keyboard. `DEV_CMD_WIRELESS_CONNECT_STATUS` (32) is
+asked of the **dongle** — a second physical device, VID `260D` PID `0042` —
+which enumerates whatever is paired to it. See
+`docs/investigations/wireless-dongle.md` for the full investigation this
+distills.
+
+### The packet (CONFIRMED, both vendor sources agree on the command)
+
+    GetWirelessConnectState:
+      HDR_STATUS = 0        <- not TARGET_ID's usual meaning, see below
+      HDR_SIZE   = 7          (the Windows app's own TgUsbHidDevice sends 6 —
+                                the one disagreement, for a field neither
+                                request otherwise uses)
+      HDR_CLASS  = CLASS_DEVICE (0)
+      HDR_COMMAND = DEV_CMD_WIRELESS_CONNECT_STATUS(32) | GET_CMD
+      no payload
+
+    reply:
+      payload[0] = connected-slot count
+      per slot (3 bytes): status, pid_hi, pid_lo
+      target_id for slot t = (t+1) << 4     (computed, not read back)
+
+**`HDR_STATUS` is where the two vendor sources genuinely diverge, not merely a
+missing digit.** The web driver hardcodes `0`. The Windows app's own
+`TgUsbHidDevice` writes `_selTargetDev` — a per-session "which device is
+currently selected" field, for a UI that manages several paired devices at
+once. This project has no equivalent of that selector: it would open the
+dongle's own hidraw node directly, not route a request through some other
+selected target, and `0` is both the web driver's literal value and this
+file's own `TARGET_ID` constant already used for every wired query. Kept for
+that reason, not picked arbitrarily between two disagreeing sources.
+
+`protocol.build_get_wireless_connect_status` / `parse_wireless_connect_status`
+implement this, and both are now confirmed against a real reply — see below.
+
+### The permission this repository did not grant at first — now extended, owner's call
+
+`device.find_dongle()` locates the dongle's vendor Feature Report interface —
+a straight mirror of `find_device()`, sharing its search logic via one
+`_find_vendor_feature_report(vid, pid)` helper rather than a copy, differing
+only in which PID it looks for. On the machine this was developed against, it
+correctly and uniquely finds `/dev/hidraw3` (of the dongle's 5 HID
+interfaces), using the *existing* `_looks_like_vendor_feature_report`
+detector completely unmodified.
+
+That path was `crw------- root:root` at first: `packaging/60-ek75.rules`
+granted `uaccess` only to `idProduct=="0101"` — the keyboard, not the dongle
+(`0042`). Extending the rule to a second `SUBSYSTEM=="hidraw"` line for
+`0042` (owner's explicit decision, not assumed from "it's just like the
+keyboard rule") and reinstalling with `packaging/install.sh` fixed that,
+without needing to replug — `udevadm trigger` alone re-evaluated the ACL for
+the already-connected dongle.
+
+### CONFIRMED ON HARDWARE — first bytes ever sent to the dongle
+
+With the udev rule extended and the keyboard switched to its 2.4G mode
+(paired to this exact dongle), `device.open_dongle()` opened
+`/dev/hidraw3` and `command_process` sent the request and read a real,
+ready reply:
+
+    request: 000700a000...(zero payload, 64 bytes)
+    reply:   020400a0000001010101000000...(64 bytes)
+    parsed:  {"count": 1, "slots": [{"target_id": 0x10, "status": 1,
+                                     "pid": 0x0101}]}
+
+The request is byte-identical to what `build_get_wireless_connect_status()`
+already produced from the vendor-source derivation above — nothing needed
+correcting. The reply decodes to exactly one connected slot carrying PID
+`0x0101`, the keyboard's own USB PID — precisely what a dongle currently
+paired to this keyboard over 2.4G should report, not merely a
+plausible-looking shape. `tests/test_protocol.py`'s
+`test_get_wireless_connect_status_confirmed_on_hardware` pins these exact
+bytes as its own test, alongside the earlier hand-derived ones.
+
+## `LED_CMD_FRAME` (4) — per-key colour, reconstructed but unsent
+
+The biggest feature the official app has and this does not: painting each key
+its own colour, and the audio visualiser, which runs through the same mechanism.
+The packet layout below is complete. **Nothing here has been sent to a
+keyboard.**
+
+### The web driver is no help, and says so by omission
+
+`CLASS_LIGHTING_CMD_LIST` declares nine commands. `tgdevice.js` sends three:
+
+    LED_CMD_ID_LIST (0), LED_CMD_ATTRIBUTE (1), LED_CMD_EFFECT (2),
+    LED_CMD_BRIGHTNESS (3)                                   <- implemented here
+    LED_CMD_FRAME (4), LED_CMD_CAL_DATA (5), LED_CMD_CHARGE_CTRL (6),
+    LED_CMD_DPI_STAGE_INDICATOR_COLOR (7), LED_CMD_CUSTOM (8)
+                                    <- appear once each, in the enum, never sent
+
+The same dead-enum pattern as the profile and macro writes. So this was
+recovered from the **Windows app** instead, by walking `DeviceBase.dll`'s IL.
+
+### The packet
+
+`UsbHidDevice.TgUsbHidDevice::SetLedFrame`, the streaming overload. Its buffer
+is offset by one against this project's, because it carries the HID report id at
+index 0; the indices below are already corrected.
+
+    HDR_STATUS   TargetId
+    HDR_SIZE     6 + 3 * leds_in_this_packet
+    HDR_CLASS    3   CLASS_LIGHTING
+    HDR_COMMAND  4   LED_CMD_FRAME | SET_CMD
+    HDR_PROFILE  not written
+      payload[0]   region id
+      payload[1]   flags — 0x01, OR 0x80 on the last frame
+      payload[2]   frame number
+      payload[3]   index of the first LED in this packet
+      payload[4]   index of the last LED in this packet
+      payload[5+]  R, G, B per LED, in order
+
+`BLOCK_SIZE = 16`, read from `TgUsbHidDevice`'s constructor: sixteen LEDs per
+packet, 48 colour bytes, 53 payload bytes in all. The single-frame overload is
+the same command with the payload passed through whole and a cap of
+`REPORT_SIZE - 1 - 6`.
+
+**`HDR_SIZE` is 6 + 3n and the payload is 5 + 3n bytes.** That is not a typo
+here: `build_set_lighting_effect` uses exactly `5 + 3n` for its own five payload
+bytes, so the vendor's two commands disagree by one. Transcribed as found rather
+than corrected — a "fix" would be this project inventing a byte the firmware may
+well be counting.
+
+`payload[0]` is the region id by inference, not by capture: every other
+`CLASS_LIGHTING` command puts it there, and `TgDevice::SetMultiLedFrame` looks
+up `RegionList[index]` and the matching `LedParams[index]` before handing off.
+Strong, and still an inference.
+
+### The sequence, and what a frame holds
+
+`TgUsbHidDevice::SetCustomLed` is the whole act, and it is two commands:
+
+1. **stream** — `SetLedFrame`, one `LED_CMD_FRAME` packet per 16 LEDs until the
+   frame is sent, with `flags |= 0x80` on the last one;
+2. **persist** — `SaveCustomLed`, which is `LED_CMD_CUSTOM` (8):
+
+       HDR_SIZE 2, HDR_CLASS 3, HDR_COMMAND 8|SET, HDR_PROFILE = profile id
+       no payload
+
+   then the usual `(status & 0x0F) == 2` ready check.
+
+⚠️ **There are two `SaveCustomLed` methods and only one of them touches the
+keyboard.** `TgUsbHidDevice::SaveCustomLed` sends the command above.
+`TgDevice::SaveCustomLed` sends nothing at all — it updates the in-memory
+profile and calls `BackupHarddiskProfile`, i.e. it writes a file on the PC.
+Reading the wrong one would give "saving is a PC-side operation", which is half
+true and useless.
+
+**What a frame holds**, from `TgDevice::MultiLedEffectCustom`:
+
+    CustomColorList[(y * MatrixY + x) * 3 + 0..2]   ->  LedFramMatrix[y][x]
+
+A flat RGB byte list, row-major, in **exactly the order of `KEY_MATRIX`** — so
+for region 1 that is 90 LEDs, 270 bytes, and a still pattern is one frame sent
+as six packets (16, 16, 16, 16, 16, 10). The whole loop is gated on
+`LedDynamic.LedTimer == 0`, which is the still case; a non-zero timer is the
+animated path and is where the frame *number* and the multi-frame loop earn
+their keep.
+
+### What the hardware said when it was sent
+
+It was sent. Region 1's snapshot was taken first and restored after; the
+keyboard is where it started.
+
+**Accepted, and the firmware acts on each packet.** With the effect set to 18
+(`StreamingFrame`, which both regions list), frame packets are acknowledged and
+the keyboard visibly changes as they arrive — streaming at 120 packets a second
+made it flash.
+
+**Three things the hardware corrected or settled, none of them guessable:**
+
+| | |
+|---|---|
+| flags byte | `0x00` on every packet, `0x80` on the last. Asked with 0x00, 0x01, 0x02, 0x40, 0x80, 0x81, 0xC0, 0xFF — **only 0x00 and 0x80 answered.** The IL reads as though it starts the byte at 1 and ORs in 0x80, i.e. 0x01/0x81, and the keyboard refuses both. That initial `1` in the decompiled method is something else. |
+| `payload[0]` | the **real region id**, 1 or 4. Not the "selected id" that `RegionIdToSelectedId` produces, which was the obvious guess from `TgDevice::SaveCustomLed` — 0 and 2 both go unanswered. |
+| `LED_CMD_CUSTOM` (8) | **not answered at all** by this keyboard. Consistent with neither region listing effects 13-17 (`CustomFrame1..5`): there is no slot here for a saved pattern, so streaming may be the only path this model has. |
+
+**And what does not work yet: the colours do not land where they are put.**
+Sending sixteen red LEDs at index 0 lights the *whole* keyboard, in blue. Sending
+sixteen blue ones lights the whole keyboard, also in blue. Two different payloads
+producing the same wrong result rules out the tidy explanations — it is not a
+BGR/RGB swap, and it is not the colour data being read one byte off, both of
+which would have produced two *different* wrong colours.
+
+`payload[3]` and `payload[4]` are accepted at every value from 0 to 89 without
+changing anything, which is what a field the firmware is not reading looks like.
+
+### Why, most likely: the vendor's app never streams to this keyboard either
+
+`TgDevice::SetLedFrame` — the top of the app's own frame path — dispatches on
+the region's `LedType` and on nothing else:
+
+    LedType == 1  ->  SetSingleLedFrame
+    LedType == 3  ->  SetMultiLedFrame
+    anything else ->  returns 0, sends nothing
+
+`LedType` comes from the device: it is written in `GetHardWare` from the reply
+this project already reads as `region_attribute()["type"]`. And **both regions
+of this keyboard report type 4**:
+
+    region 1: LedType=4  fps=33  matrix 6x15
+    region 4: LedType=4  fps=33  matrix 1x16
+
+Searching the whole of `DeviceBase.dll` for a comparison against `LedType`
+returns exactly four, in two methods — `SetLedFrame` and
+`InitLedDynamicParam` — and all four are against 1 or 3. Nothing anywhere
+handles 4.
+
+So the official software has no frame path for this model, which explains the
+observed behaviour better than any packet-layout theory: the frames are
+accepted by the firmware and do nothing coherent because **nobody has ever sent
+one to a type-4 region**, the vendor included. Effect 18 being in the region's
+advertised effect list says the firmware has the *capability*; it does not say
+the vendor ever drove it here.
+
+**What this means for the feature.** Per-key colour and the twenty `Sw` effects
+are very likely not available on this keyboard in the official app either — so
+they are not a parity gap, they are a capability of the chip family that this
+unit's type-4 regions do not expose through any known software. Anyone
+continuing should find a Dareu product whose regions report type 1 or 3 and
+capture what the app sends to it; guessing a type-4 frame format from here has
+no reference to check against, which is the situation golden rule 2 exists for.
+
+The three candidates below were written before this was found. They are kept
+because they are still the cheap things to try if someone wants to push, and
+because being wrong about *why* is worth recording:
+
+- **a mode command before streaming.** `LED_CMD_CAL_DATA` (5) and the rest of
+  the dead-enum band have never been looked at, and one of them plausibly says
+  "expect frames of this shape".
+- **the frame may have to be whole.** Ninety LEDs need six packets; perhaps the
+  firmware only renders a frame it considers complete, and the intermediate
+  packets are being discarded rather than buffered.
+- **`payload[2]`, the frame number.** Always 0 here. If the firmware wants a
+  sequence, a single repeated frame 0 may be read as "no animation, ignore".
+
+### What is still missing before this can be sent
+
+- **Which effect id shows a custom pattern.** Streaming and saving are known;
+  what makes the keyboard display it rather than whatever effect is active is
+  not. `132` is the suspect — it appears in `CheckCustomColorCount` as a
+  one-colour effect and is outside `TG_LIGHT_EFFECT_INDEX` (0-32), like the
+  130/141 already noted in the direction and speed tables.
+- ~~**Which LED index is which key.**~~ **Done.** `TK51G0101::_matrixIds` is a
+  90-entry int32 array in the product DLL's `FieldRva` data: six rows of
+  fifteen, row-major, holding the KeyID at each LED position and 0 where there
+  is no key. It is transcribed into `core/vendor_tables.KEY_MATRIX` and reads
+  as the physical keyboard:
+
+      Esc  F1  F2  F3  F4  F5  F6  F7  F8  F9 F10 F11 F12   ·   ·
+        ~   1   2   3   4   5   6   7   8   9   0   -   = Bksp PgUp
+      Tab   Q   W   E   R   T   Y   U   I   O   P   [   ]   \  Del
+     Caps   A   S   D   F   G   H   J   K   L   ;   '   · Entr PgDn
+    LShift  Z   X   C   V   B   N   M   ,   .   / RShift Up   ·   ·
+     LCtrl LWin LAlt ·   · Space  ·   ·   · RAlt  Fn RCtrl Lft Down Rgt
+
+  Checked against `0101.json`, which is public and was not involved in
+  producing it: every id exists there, none repeats, the shape is the 6x15 the
+  keyboard reports for region 1 through `LED_CMD_ATTRIBUTE`, and the only keys
+  absent are 170-172 — `Mute`, `Volume +`, `Volume -`, the knob, which has no
+  LED under it. Four independent ways for a bad transcription to show, and none
+  of them did.
+- **A way back.** Lighting is the safest write class here — `backup`/`restore`
+  are confirmed — so this is a question of sequencing, not of danger.
+
+### `_brightnessLevel`: the Fn brightness ladder — CONFIRMED ON HARDWARE
+
+The product DLL's other `FieldRva` entry is five bytes — `0, 70, 120, 190, 255`
+— and `TK51G0101::get_BrightnessLevel` returns a field of that name.
+
+**Confirmed by watching it happen**, `watch 1` with no write: the shortcut is
+`Fn`+`-`/`Fn`+`=` (not `Fn`+`↑`/`↓` as first guessed — see
+`docs/investigations/manual-fn-shortcuts.md`, the retail unit's own printed
+manual, which is what pointed at the right keys). The reported `brightness`
+walked
+
+    255 -> 190 -> 120 -> 70 -> 0 -> 70 -> 190 -> 70 -> 0 -> 70 -> 120 -> 190
+
+— every value a member of `{0, 70, 120, 190, 255}`, single steps wherever two
+consecutive polls caught consecutive presses (a couple of transitions skip a
+middle rung, e.g. `0 -> 70 -> 190`; `watch`'s polling interval is slower than
+a held key's repeat rate, so an intermediate value can come and go between two
+polls — not evidence of a different step size, just a sampling gap). It
+clamps at `0` rather than wrapping (seen twice, holding at the bottom before
+reversing); the top end was not pressed past `255` in this run, so clamp vs.
+wrap at the ceiling specifically remains unobserved, though nothing suggests
+it would differ from the floor's behaviour.
+
+`Fn`+`↑`/`↓` and `Fn`+`Space` were tried first and both changed nothing —
+checked directly against the profile, neither carries an Fn-layer function
+either, the same shape as `-`/`=` before the correct shortcut was known. This
+brightness value is never reported by `read_effect`/`LED_CMD_ATTRIBUTE` on
+its own; only the dedicated `LIT_CMD_GET_BRIGHTNESS` this project already
+implements sees it, which is how `watch 1` catches the shortcut moving it at
+all.
+
+### The software effects: ids 128-147, and what they are
+
+`PROTOCOL.md` has carried this since the beginning as a guess — "effect ids 130
+and 141 appear in the Windows app's direction and speed tables but are outside
+`TG_LIGHT_EFFECT_INDEX` (0-32). Probably the app's software-rendered effects,
+streamed as frames. Unverified."
+
+It was right, and they have names. From `DeviceBase.dll`'s enum constants:
+
+| id | name | | id | name |
+|---|---|---|---|---|
+| 128 | `SwAudioVisualizer` | | 138 | `SwCartoon` |
+| 129 | `SwEnvironment` | | 139 | `SwFlowersBloom` |
+| 130 | `SwWaterfall` | | 140 | `SwVortex` |
+| 131 | `SwRainScene` | | 141 | `SwWindowShades` |
+| 132 | `SwScanning` | | 142 | `SwFluctuate` |
+| 133 | `SwFireworks` | | 143 | `SwRainbow` |
+| 134 | `SwCollision` | | 144 | `SwAreaReactive` |
+| 135 | `SwSingleLightUp` | | 145 | `SwHeartbeat` |
+| 136 | `SwLineReactive` | | 146 | `SwFluxay` |
+| 137 | `SwSnake` | | 147 | `SwSingleOff` |
+
+**`Sw` is `Software`.** Twenty of them, contiguous, all above the firmware's
+0-32 range: the PC renders each frame and streams it with `LED_CMD_FRAME`. That
+is why they are absent from the keyboard's own `LED_CMD_ATTRIBUTE` effect list
+and why sending one as an effect id would mean nothing to the firmware.
+
+Several have a firmware twin — `Waterfall` (26) and `SwWaterfall` (130),
+`Heartbeat` (28) and `SwHeartbeat` (145), `Fluxay` (29) and `SwFluxay` (146),
+`AreaReactive` (24) and `SwAreaReactive` (144). The app presumably offers the
+software version where it wants effects the firmware cannot do alone, or a
+consistent look across models whose firmware differs.
+
+*(A grep for names starting `Sw` also returns `Swap`, `SwitchLightingMod`,
+`SwitchLayout` and `SwitchParam`. Those are not effects; the band that matters
+is the contiguous 128-147.)*
+
+### The other half: `SetAudiovisualizerParam`
+
+`ILedTg.SetAudiovisualizerParam` is on this product's interface list, so the
+audio visualiser is a feature of this model and not of a sibling. It is not in
+the web driver either. Unread.
+
 ## What is not implemented yet
 
-- **Multi-colour effects** (anything needing `N > 1` in the colour list) —
-  the wire format supports it (`build_set_lighting_effect` takes a list
-  already); no effect using it has been tried.
-- **Nothing has been written to hardware except `LED_CMD_EFFECT`.** `Flag`,
-  `Speed` and the brightness write are all resolved on paper — two independent
-  vendor implementations agree on the layout, and the Windows app settles what
-  each field means and what range it takes (see "A second vendor source") — but
-  "the vendor's own software sends this" is still not the same as "this
-  keyboard was seen to accept it". Confirming them is cheap; see "What to try
-  next".
-- **Effect ids 130 and 141** appear in the Windows app's direction and speed
-  tables but are outside `TG_LIGHT_EFFECT_INDEX` (0-32). Probably the app's
-  software-rendered effects, streamed as frames. Unverified.
-- **Everything outside `CLASS_LIGHTING`**: `CLASS_KEY` (key remapping),
-  `CLASS_BUTTON`, `CLASS_MACRO`, `CLASS_PROFILE` (multiple profiles — this
-  code always uses profile 1), `CLASS_SENSOR`/`CLASS_MAGNETIC_AXIS` (this
+- **Multi-colour effects** — implemented for the effects that use them.
+  `Breathing` and `Starlit` take a list and the GUI offers one for them;
+  everything else draws `colors[0]` and gets a single picker. See "The colour
+  list is used by some effects, over time". What is still open is `Starlit`,
+  which nobody has looked at, and how far past three `Breathing` really walks.
+- **`Flag` (direction)** — resolved on paper by two independent vendor
+  implementations, stored faithfully by the firmware, and **confirmed not to be
+  rendered** on this model. The control stays visible in the GUI with a label
+  saying so. This bullet used to read "nothing has been written to hardware
+  except `LED_CMD_EFFECT`"; that stopped being true when the brightness write,
+  `SetKeyAssign` and the key-map restore were each confirmed on hardware.
+- ~~**`Speed`, visually**~~ — **done.** `Wave` at speed 1 and at speed 3, with
+  every other field held identical, is visibly faster at 3. See "`Speed` is
+  rendered" above. It is the only one of the three unknown fields that turned
+  out to work.
+- **Effect ids 128-147 are the app's software-rendered effects** — named and
+  enumerated, see "The software effects" above. Twenty of them, the PC renders
+  each frame and streams it with `LED_CMD_FRAME`. This bullet used to say "130
+  and 141 ... probably ... unverified"; the guess was right.
+- **`SetTimeToSleep`** — bytes known, deliberately unshipped; see `CLASS_POWER` above.
+- **Choosing a new key assignment.** `SetKeyAssign` is implemented and
+  confirmed (above), but its only caller is `restore`: the bytes it sends are
+  always bytes read back from the same keyboard. A remap command needs a way to
+  *name* 57 function ids and the HID usage tables, which is a UI problem, not a
+  protocol one.
+- **Every `CLASS_PROFILE` write** — `PFL_CMD_CREATE`, `PFL_CMD_DELETE`,
+  `PFL_CMD_ACTIVE|SET`, `PFL_CMD_RESET`. The two reads are done and say this
+  keyboard holds exactly one profile; see `CLASS_PROFILE` above for why
+  creating the other two is its own slice.
+- **`MacroCreate` / `MacroDelete` / `SetMacroName`** — the two vendor sources
+  disagree on how creation packages a name with the data (see `CLASS_MACRO`
+  above). `MCO_CMD_MEMORY|SET` itself is implemented and confirmed on
+  hardware: the two reads are done, this keyboard reports one stored macro,
+  and its content can be rewritten in place.
+- **Everything outside `CLASS_LIGHTING` and the two `CLASS_POWER` reads**:
+  `CLASS_BUTTON`, `CLASS_SENSOR`/`CLASS_MAGNETIC_AXIS` (this
   model may not be Hall-effect, but the class exists in the shared
-  framework), `CLASS_POWER` (battery/sleep, relevant since `HasBattery` is
-  true in the device profile), `CLASS_AUDIO`, `CLASS_LCD`, `CLASS_TEST`.
+  framework), `CLASS_AUDIO`, `CLASS_LCD`, `CLASS_TEST`. Of `CLASS_POWER`, the
+  two reads are done; what remains there is `TIME_2_DIM` (this keyboard does not
+  answer it), `LOW_INDICATOR_CTRL`, `MAX_LED_BRIGHTNESS`, `ADC`,
+  `USB_TIME_2_SLEEP`, and the `SetTimeToSleep` write above.
 - **`CLASS_DFU` (9) — do not touch without a very good reason.** This is the
   firmware-update class. `tgdevice.js` implements it (`TgKeyboard` extends a
   base with DFU methods used by other product lines in the same framework),
@@ -912,17 +2123,24 @@ successful `set` command is permanent.
 
 ## What to try next
 
-0. **`open-ek75 probe`** — read-only, writes nothing, and answers three
-   questions at once: does `LED_CMD_ID_LIST` work on this unit, what does
-   `LED_CMD_ATTRIBUTE` say each region's real effect list is, and what is
-   every region's current state. Run this before anything else below.
+0. **`open-ek75 probe`** — read-only, writes nothing, and answers most of the
+   questions below at once: which profiles exist and which is active, does
+   `LED_CMD_ID_LIST` work on this unit, what does `LED_CMD_ATTRIBUTE` say each
+   region's real effect list is, and what is every region's current state. Run
+   this before anything else below.
 
 1. **`open-ek75 watch 1`, then press the Fn lighting shortcuts.** Writes
    nothing: the firmware changes its own state and `watch` prints which field
-   moved. This model has exactly three such keys (see "The Fn lighting
-   shortcuts" below), which settles effect, colour and brightness — **but not
-   direction, because this keyboard has no Fn key bound to it.** `Flag` can
-   only be confirmed by writing it and looking at the keyboard.
+   moved. This model binds four of them (see "The Fn lighting shortcuts"
+   below) — effect, colour, brightness and speed — **but not direction, which
+   no Fn key on this keyboard is bound to.** `Flag` can only be confirmed by
+   writing it and looking at the keyboard.
+
+   Speed is **done**: pressing `Fn`+`←`/`→` walked the stored value
+   3 → 2 → 1 → 2 → 3 → 2 and never left 1-3, confirming the range without a
+   single write (see "`Speed` is 1-3"). This entry was previously written as
+   settling only three fields, because the vendor profile does not show the
+   `Fn`+`←`/`→` binding and the live key map had not been read yet.
 
 2. **`Wave` with each direction — the single most valuable test left.**
 
@@ -939,16 +2157,28 @@ successful `set` command is permanent.
    `backup`/`restore`.
 
 3. **`Speed` 1 vs 3 on `Wave`** — the same command with `--speed 1` and
-   `--speed 3`. Speed has been acknowledged at 2 but never observed to change
-   anything, because everything sent before `Wave` was a non-animating effect.
+   `--speed 3`. The *range* is settled (above); what is still unobserved is
+   whether the number changes how fast an animation actually runs, because
+   everything sent before `Wave` was a non-animating effect. Watching the
+   stored value move proves the firmware accepts and keeps it, not that it
+   renders it — the same gap that `Flag` turned out to fall into.
 
-4. **Multi-colour effects** (`colors=[(r,g,b), ...]`, up to five) — the last
-   wire feature the repo models but has never exercised. Would confirm whether
-   N>1 renders as a gradient or is ignored past the first colour.
+4. ~~**Multi-colour effects**~~ — **done, and the answer depends on the
+   effect.** `Breathing` cycles the whole list, one colour per breath, in
+   order. `Static` and `Wave` draw only the first. The vendor's own per-effect
+   table agrees and names `Starlit` as the other multi-colour one. See "The
+   colour list is used by some effects, over time" above.
 
-5. **Multi-colour Static or Breathing** (`colors=[(r,g,b), (r,g,b)]`, up to
-   five) — would confirm whether N>1 renders as a gradient or is ignored past
-   the first colour.
+   Two answers were written here before this one. The first said "not tried";
+   the second said "the answer is no", from looking at `Static` and `Wave` and
+   generalising. What the second one missed is that a list can be spent over
+   **time** rather than across the keys, which no single glance can see. It is
+   the most instructive wrong answer in this file.
+
+   **Still open:** `Starlit` (11) has not been looked at, and the vendor caps
+   both multi-colour effects at two while this firmware cycled three — so how
+   many `Breathing` really walks, up to the five the wire allows, is unmeasured
+   past three.
 5. If you have a **different PID** in this family (check its `FwType` at
    `https://dr.dareu.com/products/<PID>/<PID>.json` first — this exact
    `find_device()`/packet layout only applies to `FwType: 0`), the read path

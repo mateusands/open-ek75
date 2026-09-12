@@ -100,6 +100,111 @@ class Session:
                 out[region] = info
         return out
 
+    # --- key map (read-only) -------------------------------------------------
+
+    def read_key_assign(self, key_id, layer, profile_id=protocol.DEFAULT_PROFILE_ID):
+        """What one key does on one layer, or None if it does not answer."""
+        resp = device.command_process(
+            self.fd, protocol.build_get_key_assign(key_id, layer, profile_id))
+        if resp is None:
+            return None
+        return protocol.parse_key_assign_response(resp)
+
+    def read_key_map(self, key_ids, layers=(protocol.LAYER_BASE, protocol.LAYER_FN),
+                      profile_id=protocol.DEFAULT_PROFILE_ID):
+        """{(key_id, layer): assignment or None} for the ids given.
+
+        The ids are a parameter, not a range: this keyboard's run from 1 to 172
+        with gaps, so anything assuming `range(1, 84)` would read keys that do
+        not exist and miss ones that do. `core.layout` is where the real list
+        comes from; keeping it a parameter is what lets this module stay out of
+        the layout's business.
+
+        A key that does not answer gets None rather than aborting the sweep —
+        166 reads is enough for one of them to time out without the other 165
+        being worth throwing away. Measured: 1.56 s for the full map.
+        """
+        out = {}
+        for key_id in key_ids:
+            for layer in layers:
+                out[(key_id, layer)] = self.read_key_assign(key_id, layer, profile_id)
+        return out
+
+    # --- power (read-only) ---------------------------------------------------
+    # On Session rather than in a module of their own: gui/controller.py opens
+    # exactly one `lighting.Session` for the worker thread, so a second session
+    # class would have no way to reach the GUI. The module name is now narrower
+    # than what it holds; renaming it is a separate change.
+
+    def read_battery(self):
+        """Charge and charging state, or None if the device does not answer."""
+        resp = device.command_process(self.fd, protocol.build_get_battery_status())
+        if resp is None:
+            return None
+        return protocol.parse_battery_status_response(resp)
+
+    def read_sleep(self, profile_id=protocol.DEFAULT_PROFILE_ID):
+        """The idle timeout stored for one profile, or None if unanswered."""
+        resp = device.command_process(
+            self.fd, protocol.build_get_time_to_sleep(profile_id))
+        if resp is None:
+            return None
+        return protocol.parse_time_to_sleep_response(resp)
+
+    def read_profiles(self):
+        """Which profiles the keyboard holds, and which one is active.
+
+        Returns {"ids": [...] or None, "active": int or None}. Each field is
+        None when that specific read went unanswered — the two are separate
+        commands and one can fail while the other succeeds. None is never
+        replaced by a plausible default: "profile 1, obviously" is exactly the
+        assumption this read exists to check, and the vendor's own device
+        profile has already been caught being wrong about this hardware 23
+        times over.
+
+        Read-only. Creating, deleting and switching profiles are writes and are
+        not implemented — see PROTOCOL.md's CLASS_PROFILE section.
+        """
+        data = device.get_multipacket(
+            self.fd, 0, protocol.CLASS_PROFILE, protocol.PFL_CMD_ID_LIST)
+        ids = protocol.parse_profile_id_list(data) if data is not None else None
+
+        resp = device.command_process(self.fd, protocol.build_get_active_profile())
+        active = (protocol.parse_active_profile_response(resp)
+                  if resp is not None else None)
+        return {"ids": ids, "active": active}
+
+    def read_macros(self):
+        """Which macros this keyboard holds. Returns {"ids": [...] or None}.
+
+        None means the command went unanswered, which is a different fact from
+        an empty list and is kept distinguishable: this keyboard's device
+        profile does not mention macros at all, and `PWR_CMD_TIME_2_DIM` is
+        already a precedent for a command it simply ignores. "No macros" and
+        "no macro support" should not be printed as the same thing.
+
+        Read-only. Creating, naming and writing macros are all writes and none
+        of them is implemented — see PROTOCOL.md's CLASS_MACRO section.
+        """
+        data = device.get_multipacket(
+            self.fd, 0, protocol.CLASS_MACRO, protocol.MCO_CMD_ID_LIST)
+        if data is None:
+            return {"ids": None}
+        return {"ids": protocol.parse_macro_id_list(data)}
+
+    def read_macro_data(self, macro_id):
+        """One macro's recorded bytes, or None if unanswered.
+
+        Two-byte length, because a macro can be longer than a single byte could
+        describe. Returns raw bytes, not decoded steps — decoding is pure logic
+        with no device I/O, so it lives in `keymap.format_macro_steps` and
+        every caller (cli.py, gui/) goes through that one function rather than
+        each deciding on its own what an unparseable byte should read like.
+        """
+        return device.get_multipacket(
+            self.fd, 0, protocol.CLASS_MACRO, protocol.MCO_CMD_MEMORY,
+            args=bytes([macro_id]), width=2)
+
     # --- writes --------------------------------------------------------------
 
     def set_effect(self, region_id, effect, colors, flag=0, speed=0):
@@ -116,8 +221,148 @@ class Session:
             protocol.build_set_lighting_brightness(region_id, brightness),
         ) is not None
 
+    def write_macro_data(self, macro_id, data):
+        """Write one macro's recorded bytes. Returns whether every chunk ACKed.
+
+        First write to CLASS_MACRO, and the first slice of it: this writes
+        content to a macro id that already exists on the keyboard. It does not
+        create, name or delete one — `MacroCreate`/`SetMacroName`/
+        `MacroDelete` are deliberately not implemented, because the two vendor
+        sources disagree on how creation packages a name with the data (the
+        Windows app does both in one call; the web driver does them
+        separately), and golden rule 2 forbids guessing between them. See
+        PROTOCOL.md's `CLASS_MACRO` section.
+
+        Settles afterward, but only when something was actually sent — same
+        rule `restore`/`restore_key_map` follow: a macro longer than 48 bytes
+        is more than one packet, which is the kind of burst a read straight
+        after can trail; empty data sends nothing (see `device.set_multipacket`)
+        and there is no burst to settle after.
+        """
+        ok = device.set_multipacket(
+            self.fd, 0, protocol.CLASS_MACRO, protocol.MCO_CMD_MEMORY, data,
+            args=bytes([macro_id]), width=2)
+        if data:
+            self.settle()
+        return ok
+
+    def write_key_assign(self, key_id, layer, function_id, data,
+                         profile_id=protocol.DEFAULT_PROFILE_ID):
+        """Assign one key on one layer. Returns whether the firmware ACKed.
+
+        Writes persistent memory. The only caller in this project is
+        `restore_key_map`, which can send nothing but bytes this keyboard
+        produced — choosing a *new* assignment is deliberately not implemented
+        yet. See PROTOCOL.md's `SetKeyAssign` section for the way back.
+        """
+        return device.command_process(
+            self.fd,
+            protocol.build_set_key_assign(key_id, layer, function_id, data,
+                                          profile_id=profile_id),
+        ) is not None
+
+    def settle(self):
+        """Leave the link quiet so the next read is not one step behind.
+
+        Delegates: the duration is a property of the hardware link and lives in
+        `device`. Call this after issuing a run of commands — the two methods
+        below do — and not after a single one, which does not need it.
+        """
+        device.settle()
+
+    def assign_key(self, key_id, layer, function_id, data,
+                   profile_id=protocol.DEFAULT_PROFILE_ID):
+        """Assign one key and return **what the keyboard then reports**.
+
+        Not what was asked for. The two can differ, and only the read is true —
+        `HIDIOCSFEATURE` succeeds whether or not the firmware liked the packet,
+        so a method that echoed its own argument back would turn the UI into a
+        mirror of its own input. Returns None when the write was not
+        acknowledged, and does not read in that case: a read that happens to
+        succeed after a refused write looks exactly like confirmation.
+
+        The settle between the two is not optional here. A user clicking Apply
+        repeatedly turns single writes into a burst, and a read inside a burst
+        returns a coherent earlier state; an isolated write followed by a read
+        was measured correct 30/30, but "isolated" is not something this method
+        can promise about its caller.
+
+        **Which keys may be assigned is the caller's policy, not this method's.**
+        `keymap.locked_keys` names the two whose loss breaks the `Fn`+`Esc`
+        factory reset, and it needs a whole key map to do it — which belongs to
+        the page that has one, not to a method that writes a single key.
+        """
+        if not self.write_key_assign(key_id, layer, function_id, data,
+                                     profile_id=profile_id):
+            return None
+        self.settle()
+        return self.read_key_assign(key_id, layer, profile_id=profile_id)
+
+    def stream_frame(self, region_id, colors):
+        """Paint every LED of a region at once, in `vendor_tables.KEY_MATRIX` order.
+
+        The region's effect must already be `EFFECT_STREAMING_FRAME` (18) —
+        both regions of this keyboard list it in their LED_CMD_ATTRIBUTE reply.
+        Setting it is the caller's job, because it is an ordinary
+        `set_effect` and this method is only the frame.
+
+        Sent as ceil(len/16) packets, the last one flagged. Returns True when
+        every packet was acknowledged; a half-sent frame is reported as the
+        failure it is rather than as a partial success.
+
+        NOT CONFIRMED ON HARDWARE at the time of writing.
+        """
+        block = protocol.LED_FRAME_BLOCK
+        colors = list(colors)
+        chunks = [colors[i:i + block] for i in range(0, len(colors), block)]
+        for index, chunk in enumerate(chunks):
+            packet = protocol.build_set_led_frame(
+                region_id, chunk, frame=0, first_led=index * block,
+                last_frame=index == len(chunks) - 1)
+            if device.command_process(self.fd, packet) is None:
+                return False
+        return True
+
+    def restore_key_map(self, key_map, profile_id=protocol.DEFAULT_PROFILE_ID):
+        """Put a saved key map back. Returns [((key_id, layer), ok), ...].
+
+        Per-key results rather than one boolean, for the same reason `restore`
+        reports per-region: 166 writes that mostly worked is not a success, and
+        a caller that cannot see which one failed will report it as one.
+
+        Entries that are None are skipped, not written as zeros — None means
+        "this key never answered when the backup was taken", and turning that
+        into `function_id=0, data=[0,0,0,0,0]` would assign it *nothing*, which
+        is a real and destructive assignment rather than a missing one.
+        """
+        applied = []
+        sent = 0
+        try:
+            for (key_id, layer), value in key_map.items():
+                if value is None:
+                    continue
+                function_id, data = value["function_id"], value["data"]
+                sent += 1                          # recorded next to the write,
+                ok = self.write_key_assign(        # after the entry is unpacked
+                    key_id, layer, function_id, data, profile_id=profile_id)
+                applied.append(((key_id, layer), ok))
+        finally:
+            # In a `finally` because a burst cut short by an exception is
+            # exactly when the caller reads straight afterwards to find out what
+            # happened. Once, not per key: 166 settles would add 25 s. Counted
+            # on writes begun rather than acknowledged — see `restore` for why
+            # that test is deliberately the conservative one.
+            if sent:
+                self.settle()
+        return applied
+
     def restore(self, regions):
         """Re-apply a snapshot: effect, colours, flag, speed AND brightness.
+
+        Every write here lands — that was tested directly. What trails is a
+        *read* issued while the burst is still in flight, which is why this
+        method ends with a settle; see PROTOCOL.md, "Under sustained traffic,
+        reads trail the keyboard's real state".
 
         Brightness is part of the state and has to be part of the way back.
         Leaving it out made `restore` look like it worked while the region came
@@ -129,13 +374,42 @@ class Session:
         a success.
         """
         applied = []
+        sent = []
+        try:
+            self._restore_regions(regions, applied, sent)
+        finally:
+            # `sent`, not `applied`: a write that raised may still have put
+            # bytes on the wire, because command_process sends before it polls.
+            # From here that is not knowable — the exception could equally have
+            # come from building the packet — so the test is deliberately the
+            # conservative one, "did we begin a write". Settling when we did not
+            # need to costs 150 ms once; not settling when we did risks handing
+            # the caller an earlier state, and an aborted burst is exactly when
+            # the caller reads next to find out what happened.
+            if sent:
+                self.settle()
+        return applied
+
+    def _restore_regions(self, regions, applied, sent):
+        """The write loop itself, so `restore` is only the burst's bookkeeping."""
         for region, info in regions.items():
-            colors = info["colors"] or [(0, 0, 0)]
-            ok = self.set_effect(region, info["effect"], colors,
-                                 flag=info.get("flag", 0),
-                                 speed=info.get("speed", 0))
+            # `[]` is the RGB/rainbow mode and must survive the round trip. The
+            # old `info["colors"] or [(0, 0, 0)]` treated it as "nothing chosen"
+            # because [] is falsy, so every region saved in rainbow came back
+            # solid black — the backup file was right and the keyboard was not.
+            # The firmware accepts an empty list and reports it back empty
+            # (confirmed on region 1 with Wave), so there is nothing to
+            # substitute. A genuinely absent list is a different thing and still
+            # gets the fallback `set_effect` needs.
+            colors = info["colors"]
+            if not colors and colors != []:
+                colors = [(0, 0, 0)]
+            effect = info["effect"]                # unpacked before `sent`, so a
+            flag = info.get("flag", 0)             # malformed entry raises with
+            speed = info.get("speed", 0)           # nothing sent and no settle
+            sent.append(region)                # recorded next to the write
+            ok = self.set_effect(region, effect, colors, flag=flag, speed=speed)
             brightness = info.get("brightness")
             if ok and brightness is not None:
                 ok = self.set_brightness(region, brightness)
             applied.append((region, ok))
-        return applied

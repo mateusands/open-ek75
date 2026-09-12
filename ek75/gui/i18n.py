@@ -23,15 +23,15 @@ STRINGS = {
         "from_windows_app": "from the official Windows app",
         "direction_inert": "stored by the firmware, but this model shows no\nvisible change — see PROTOCOL.md",
         "device_subtitle": "Dareu TK51G family — sold as Husky HTG200/HTG500/HTG800 V2",
-        "backup_blurb": ("The keyboard keeps its lighting in persistent memory: a\n"
-                          "change survives unplugging the cable. A backup is the\n"
-                          "way back from a setting you do not like."),
+        "backup_blurb": ("The keyboard keeps its lighting AND its key map in\n"
+                          "persistent memory: both survive unplugging the cable.\n"
+                          "A backup saves the two together and is the way back\n"
+                          "from a change you do not like."),
         "layout_note": ("The layout below is read from Dareu's own device profile "
                          "— 83 keys, the vendor's own geometry."),
         "todo_connection": "Wired/wireless connection toggle",
         "todo_profiles": "Profile selector",
-        "todo_sleep": "Sleep timer",
-        "todo_battery": "Battery level",
+        "todo_sleep": "Sleep timer — changing it",
         "nav_home": "Device",
         "nav_keys": "Keys",
         "nav_lighting": "Lighting",
@@ -48,8 +48,17 @@ STRINGS = {
         "rgb_mode": "RGB (the keyboard picks)",
         "color_rgb_only": "This effect is RGB only — the firmware picks its\ncolours and ignores any you send.",
         "fn_guide": "Fn shortcuts",
-        "fn_guide_hint": ("Read from the keyboard's own default key map. None of\n"
-                           "this is printed on the case."),
+        "fn_needs_device": ("Connect the keyboard to read its shortcuts.\n"
+                             "They are not listed from the vendor profile: on the unit\n"
+                             "this was built against, 23 of its assignments disagree\n"
+                             "with the hardware. See PROTOCOL.md."),
+        "fn_reading": "Reading the key map…",
+        "keys_live": "Read from the keyboard",
+        "keys_base": "Base",
+        "keys_fn": "Fn",
+        "keys_click": "Click a key to see what it is assigned to.",
+        "fn_guide_hint": ("Read from the keyboard itself, not from the vendor's\n"
+                           "profile. None of this is printed on the case."),
         "fn_search": "Filter",
         "color_ignored": "This zone ignores the colour for this effect —\nit renders a fixed pattern. See PROTOCOL.md.",
         "apply": "Apply",
@@ -66,13 +75,138 @@ STRINGS = {
         "backup_saved": "Backed up to {path}",
         "backup_failed": "Backup failed: {error}",
         "restored": "Restored from {path}",
+        "color_list_note": ("This effect cycles the list, in order — Breathing "
+                             "shows one colour per breath.\nClick a swatch to "
+                             "edit it."),
+        "nav_profiles": "Profiles",
+        "profiles_blurb": ("Named configurations, kept on this machine — which is "
+                            "where the vendor's\napp keeps its Profile 1/2/3 too. "
+                            "A profile holds the same two things a\nbackup does: "
+                            "the lighting and the key map."),
+        "profiles_saved": "Saved on this machine",
+        "profiles_none": ("No profiles yet. \"Save current\" stores what the "
+                           "keyboard has right now under a name you choose."),
+        "profiles_apply": "Apply",
+        "profiles_save": "Save current",
+        "profiles_delete": "Delete",
+        "profiles_name_prompt": "Name for this profile:",
+        "profiles_saving": "Reading the keyboard and saving as {name}…",
+        "profiles_saved_ok": "Saved as {name}",
+        "profiles_deleted": "Deleted {name}",
+        "profiles_note": ("Switching is done here, not with a key on the keyboard: "
+                           "that would need a\nsecond profile in the device's own "
+                           "memory, and the command that creates one\nhas never "
+                           "been sent to this hardware. See PROTOCOL.md."),
+        "macros_blurb": ("Read-only. What this keyboard reports it has stored — "
+                          "the vendor's\ndevice profile does not mention macros "
+                          "at all, so this is the only\nplace the answer comes "
+                          "from."),
+        "macros_stored": "Stored on the keyboard",
+        "macros_one": "Macro {id}",
+        "macros_size": "{bytes} bytes recorded",
+        "macros_no_data": "The keyboard listed this macro but did not send its data.",
+        "macros_none": "This keyboard reports no stored macros.",
+        "macros_unsupported": ("This keyboard did not answer the macro commands "
+                                "at all. That is a different thing from having "
+                                "none: the command class exists in the shared "
+                                "firmware, and this model may simply not "
+                                "implement it."),
+        "macros_writes": ("The bytes are shown raw because they have not been "
+                           "decoded. The vendor's\ndriver passes macro data "
+                           "straight through, and the code that builds it is "
+                           "not\namong the files this project has — a guess at "
+                           "the keystrokes would be an\ninvented format. "
+                           "Creating, naming and recording macros are writes, "
+                           "and\nnone of them is implemented."),
+        "keys_blurb": ("What each key does, read from the keyboard itself — the "
+                        "vendor's\nprofile disagrees with this hardware on 23 "
+                        "assignments. Click a key to\nsee it, then assign it "
+                        "something else."),
+        "keys_assign": "Assign",
+        "keys_layer": "Layer",
+        "keys_source": "Assign to",
+        "keys_source_key": "A key",
+        "keys_source_media": "Media",
+        "keys_source_copy": "Copy",
+        "keys_pick_target": "Pick what this key should do.",
+        "keys_chosen": "Chosen: {name}",
+        "keys_apply": "Apply",
+        "keys_revert": "Revert to backup",
+        "keys_working": "Writing…",
+        "keys_writing": "Writing the assignment and reading it back…",
+        "keys_written": "The keyboard now reports: {name}",
+        "keys_refused": "The keyboard did not acknowledge the write — nothing changed.",
+        "keys_locked": ("This key cannot be remapped: it is half of Fn+Esc, the "
+                         "factory reset built into the firmware. That is the way "
+                         "back from a bad key write, and it must keep working."),
+        "keys_need_backup": ("No key map has been backed up yet. Take a backup "
+                              "from the Device page first — nothing here writes "
+                              "without a way back."),
+        "keys_no_hatch": ("Warning: this keyboard did not report an Fn modifier "
+                           "or a factory reset, so the Fn+Esc way back was not "
+                           "found on it. Keep your backup."),
+        "keys_hatch": ("The way back: Revert uses your backup. Under that, "
+                        "Fn+Esc is a factory reset built into the firmware — it "
+                        "needs nothing from this software."),
+        "keys_no_targets": ("Nothing to copy: this keyboard reports no "
+                             "assignment from the vetted list. Resets, pairing "
+                             "and the knob are deliberately not copyable."),
+        "nav_keytest": "Key test",
+        "keytest_blurb": ("Press a physical key and watch it light up here — "
+                          "reading ordinary keyboard events, not a Dareu "
+                          "command. See what's tested below for what this "
+                          "can't confirm."),
+        "keytest_focus_hint": "Click the keyboard, then start typing.",
+        "keytest_listening": "Listening — press any key to test it.",
+        "keytest_needs_device": "Connect the keyboard to test its keys.",
+        "keytest_idle": "Waiting for a keypress…",
+        "keytest_unknown_keysym": ("Got a key event ({keysym}) this project's "
+                                   "table doesn't have a USB usage for yet."),
+        "keytest_no_match": ("Resolved to a usage ({keysym} → USB usage "
+                             "0x{usage:02X}), but no key on this keyboard "
+                             "currently sends it."),
+        "keytest_pressed": "{keysym}  →  {label}  (KeyID {id}){lock}",
+        "keytest_currently": "Currently assigned — {layer}: {name}",
+        "keytest_limits_title": "What this can't confirm",
+        "keytest_limits": (
+            "• Fn itself never shows as its own event — it has no HID usage; "
+            "the keyboard's own controller decides what OTHER key to send.\n\n"
+            "• The four Fn-lighting shortcuts (brightness, speed, cycle effect, "
+            "cycle colour) only show up by polling the lighting state "
+            "(`watch`), never as a keyboard event here.\n\n"
+            "• Fn+Esc (factory reset) is deliberately never invited — the "
+            "locked key below shows a 🔒 instead.\n\n"
+            "• Print Screen and the media/volume/brightness keys may never "
+            "reach a focused window at all: many desktops claim them for "
+            "their own screenshot tool or on-screen volume display before "
+            "any application sees them. That's the desktop, not a fault of "
+            "this keyboard or this page.\n\n"
+            "• Window-manager shortcuts (Alt+Tab, Super+anything) are grabbed "
+            "globally the same way.\n\n"
+            "• This does not check rollover/anti-ghosting — a missing event "
+            "here could mean the keyboard dropped it, or the desktop did."),
+        "backup_unreadable": "{name} is not a backup this can read ({detail}).",
+        "restoring": "Restoring the lighting…",
+        "restoring_keys": "Restoring the lighting and the key map — the key map "
+                          "is 166 writes and takes about 17 seconds.",
+        "restore_partial": "Restored with failures: {regions} lighting "
+                           "region(s), {keys} key assignment(s). The backup is "
+                           "still on disk — running restore again is the fix.",
+        "profiles_active": "{listed}   (active: {active})",
+        "profiles_only_one": "— the vendor app's other slots must be created first",
         "no_backup": "No backup file yet — use Back up first",
-        "auto_backup": "Saved a backup of the current lighting to {path}",
+        "auto_backup": "Saved a backup of this keyboard to {path}",
         "device_model": "Model",
         "device_pid": "USB id",
         "device_node": "HID node",
         "device_firmware": "Firmware in the vendor profile",
         "device_battery": "Battery",
+        "device_sleep": "Sleep timer",
+        "sleep_disabled": "disabled",
+        "sleep_minutes": "{minutes} min",
+        "battery_reading": "reading…",
+        "battery_unknown": "unknown",
+        "device_profiles": "Profiles",
         "device_regions": "Lighting regions",
         "yes": "yes",
         "no": "no",
@@ -86,20 +220,6 @@ STRINGS = {
             "The keyboard's HID node is root-only on this system.\n\n"
             "Install the udev rule once, then replug the keyboard:\n"
             "    sudo sh packaging/install.sh"
-        ),
-        "keys_todo": (
-            "Key remapping needs CLASS_KEY, which is not ported yet.\n\n"
-            "The vendor driver's GetKeyAssign/SetKeyAssign are identified in\n"
-            "docs/vendor-reference/tgdevice.js and the 83-key layout below is\n"
-            "already read from Dareu's own device profile — what is missing is\n"
-            "the packet builders and a byte-match test for each, then one\n"
-            "confirmation on real hardware."
-        ),
-        "macros_todo": (
-            "Macros need CLASS_MACRO, which is not ported yet.\n\n"
-            "MacroCreate / SetMacroData / GetMacroIdList exist in\n"
-            "docs/vendor-reference/tgdevice.js and use the same multi-packet\n"
-            "transfer this project already implements for the region list."
         ),
         "effects": {
             # The official software's English labels, from LangLib.dll
@@ -153,15 +273,15 @@ STRINGS = {
         "from_windows_app": "do app oficial da Husky",
         "direction_inert": "o firmware guarda o byte, mas este modelo não\nmuda visivelmente — veja PROTOCOL.md",
         "device_subtitle": "Família Dareu TK51G — vendido como Husky HTG200/HTG500/HTG800 V2",
-        "backup_blurb": ("O teclado guarda a iluminação em memória persistente:\n"
-                          "a mudança sobrevive a desconectar o cabo. O backup é\n"
-                          "o caminho de volta de um ajuste que não agradou."),
+        "backup_blurb": ("O teclado guarda a iluminação E o mapa de teclas em\n"
+                          "memória persistente: os dois sobrevivem a desconectar\n"
+                          "o cabo. O backup salva os dois juntos e é o caminho\n"
+                          "de volta de uma mudança que não agradou."),
         "layout_note": ("O layout abaixo vem do perfil de dispositivo da própria "
                          "Dareu — 83 teclas, a geometria do fabricante."),
         "todo_connection": "Alternar conexão com fio / sem fio",
         "todo_profiles": "Seletor de perfis",
-        "todo_sleep": "Tempo de espera",
-        "todo_battery": "Nível de bateria",
+        "todo_sleep": "Tempo de espera — alterar",
         "nav_home": "Dispositivo",
         "nav_keys": "Teclas",
         "nav_lighting": "Iluminação",
@@ -178,7 +298,16 @@ STRINGS = {
         "rgb_mode": "RGB (o teclado escolhe)",
         "color_rgb_only": "Este efeito é só RGB — o firmware escolhe as cores\ne ignora qualquer uma que você envie.",
         "fn_guide": "Atalhos com Fn",
-        "fn_guide_hint": ("Lidos do mapa de teclas padrão do próprio teclado.\n"
+        "fn_needs_device": ("Conecte o teclado para ler os atalhos dele.\n"
+                             "Eles não são listados a partir do perfil do fabricante:\n"
+                             "na unidade em que isto foi construído, 23 atribuições dele\n"
+                             "discordam do hardware. Veja o PROTOCOL.md."),
+        "fn_reading": "Lendo o mapa de teclas…",
+        "keys_live": "Lido do teclado",
+        "keys_base": "Base",
+        "keys_fn": "Fn",
+        "keys_click": "Clique numa tecla para ver a atribuição dela.",
+        "fn_guide_hint": ("Lidos do próprio teclado, não do perfil do fabricante.\n"
                            "Nada disso vem impresso no case."),
         "fn_search": "Filtrar",
         "color_ignored": "Esta zona ignora a cor neste efeito — ela mostra\num padrão fixo. Veja PROTOCOL.md.",
@@ -196,13 +325,140 @@ STRINGS = {
         "backup_saved": "Backup salvo em {path}",
         "backup_failed": "Falha no backup: {error}",
         "restored": "Restaurado de {path}",
+        "color_list_note": ("Este efeito percorre a lista, em ordem — o Breathing "
+                             "mostra uma cor por respirada.\nClique num "
+                             "quadradinho para editá-lo."),
+        "nav_profiles": "Perfis",
+        "profiles_blurb": ("Configurações nomeadas, guardadas nesta máquina — que é "
+                            "onde o app do\nfabricante guarda o Profile 1/2/3 dele "
+                            "também. Um perfil tem as mesmas\nduas coisas que um "
+                            "backup: a iluminação e o mapa de teclas."),
+        "profiles_saved": "Guardados nesta máquina",
+        "profiles_none": ("Nenhum perfil ainda. \"Salvar atual\" guarda o que o "
+                           "teclado tem agora com um nome que você escolher."),
+        "profiles_apply": "Aplicar",
+        "profiles_save": "Salvar atual",
+        "profiles_delete": "Apagar",
+        "profiles_name_prompt": "Nome para este perfil:",
+        "profiles_saving": "Lendo o teclado e salvando como {name}…",
+        "profiles_saved_ok": "Salvo como {name}",
+        "profiles_deleted": "{name} apagado",
+        "profiles_note": ("A troca acontece aqui, não numa tecla do teclado: isso "
+                           "exigiria um segundo\nperfil na memória do aparelho, e o "
+                           "comando que cria um nunca foi enviado\na este hardware. "
+                           "Veja o PROTOCOL.md."),
+        "macros_blurb": ("Somente leitura. O que este teclado reporta ter "
+                          "guardado — o perfil de\ndispositivo do fabricante nem "
+                          "menciona macros, então esta é a única\nfonte da "
+                          "resposta."),
+        "macros_stored": "Guardadas no teclado",
+        "macros_one": "Macro {id}",
+        "macros_size": "{bytes} bytes gravados",
+        "macros_no_data": "O teclado listou esta macro mas não enviou os dados dela.",
+        "macros_none": "Este teclado não reporta nenhuma macro guardada.",
+        "macros_unsupported": ("Este teclado não respondeu aos comandos de macro. "
+                                "Isso é diferente de não ter nenhuma: a classe de "
+                                "comando existe no firmware compartilhado, e este "
+                                "modelo pode simplesmente não implementá-la."),
+        "macros_writes": ("Os bytes aparecem crus porque não foram decodificados. "
+                           "O driver do\nfabricante repassa os dados da macro sem "
+                           "tocar, e o código que os monta não\nestá entre os "
+                           "arquivos que este projeto tem — um palpite sobre as "
+                           "teclas\nseria um formato inventado. Criar, nomear e "
+                           "gravar macros são escritas, e\nnenhuma delas está "
+                           "implementada."),
+        "keys_blurb": ("O que cada tecla faz, lido do próprio teclado — o perfil "
+                        "do\nfabricante discorda deste hardware em 23 atribuições. "
+                        "Clique numa tecla\npara ver, e então atribua outra coisa "
+                        "a ela."),
+        "keys_assign": "Atribuir",
+        "keys_layer": "Camada",
+        "keys_source": "Atribuir a",
+        "keys_source_key": "Uma tecla",
+        "keys_source_media": "Mídia",
+        "keys_source_copy": "Copiar",
+        "keys_pick_target": "Escolha o que esta tecla deve fazer.",
+        "keys_chosen": "Escolhido: {name}",
+        "keys_apply": "Aplicar",
+        "keys_revert": "Voltar ao backup",
+        "keys_working": "Gravando…",
+        "keys_writing": "Gravando a atribuição e lendo de volta…",
+        "keys_written": "O teclado agora reporta: {name}",
+        "keys_refused": "O teclado não confirmou a escrita — nada mudou.",
+        "keys_locked": ("Esta tecla não pode ser remapeada: ela é metade do "
+                         "Fn+Esc, o reset de fábrica embutido no firmware. Esse é "
+                         "o caminho de volta de uma escrita ruim, e precisa "
+                         "continuar funcionando."),
+        "keys_need_backup": ("Nenhum mapa de teclas foi salvo ainda. Faça um "
+                              "backup na página Dispositivo primeiro — nada aqui "
+                              "escreve sem caminho de volta."),
+        "keys_no_hatch": ("Atenção: este teclado não reportou um modificador Fn "
+                           "nem um reset de fábrica, então o caminho de volta "
+                           "Fn+Esc não foi encontrado nele. Guarde seu backup."),
+        "keys_hatch": ("O caminho de volta: Voltar ao backup usa o seu arquivo. "
+                        "Abaixo disso, Fn+Esc é um reset de fábrica embutido no "
+                        "firmware — não depende deste software."),
+        "keys_no_targets": ("Nada para copiar: este teclado não reporta nenhuma "
+                             "atribuição da lista permitida. Resets, pareamento "
+                             "e o knob não são copiáveis de propósito."),
+        "nav_keytest": "Teste de teclas",
+        "keytest_blurb": ("Aperte uma tecla física e veja ela acender aqui — "
+                          "lendo eventos comuns de teclado, não um comando "
+                          "Dareu. Veja abaixo o que isso não consegue "
+                          "confirmar."),
+        "keytest_focus_hint": "Clique no teclado e comece a digitar.",
+        "keytest_listening": "Ouvindo — aperte qualquer tecla para testar.",
+        "keytest_needs_device": "Conecte o teclado para testar as teclas dele.",
+        "keytest_idle": "Esperando uma tecla…",
+        "keytest_unknown_keysym": ("Chegou um evento de tecla ({keysym}) que "
+                                   "a tabela deste projeto ainda não tem um "
+                                   "usage USB definido."),
+        "keytest_no_match": ("Resolveu para um usage ({keysym} → usage USB "
+                             "0x{usage:02X}), mas nenhuma tecla deste teclado "
+                             "está mandando isso agora."),
+        "keytest_pressed": "{keysym}  →  {label}  (KeyID {id}){lock}",
+        "keytest_currently": "Atribuição atual — {layer}: {name}",
+        "keytest_limits_title": "O que isso não consegue confirmar",
+        "keytest_limits": (
+            "• O próprio Fn nunca aparece como um evento — ele não tem usage "
+            "HID; o controlador do teclado decide qual OUTRA tecla mandar.\n\n"
+            "• Os quatro atalhos Fn de iluminação (brilho, velocidade, trocar "
+            "efeito, trocar cor) só aparecem consultando o estado da "
+            "iluminação (`watch`), nunca como evento de teclado aqui.\n\n"
+            "• Fn+Esc (reset de fábrica) nunca é convidado de propósito — a "
+            "tecla travada abaixo mostra um 🔒 em vez disso.\n\n"
+            "• Print Screen e as teclas de mídia/volume/brilho podem nunca "
+            "chegar numa janela em foco: muitos ambientes gráficos capturam "
+            "elas antes para a própria ferramenta de captura de tela ou o "
+            "indicador de volume na tela. Isso é o ambiente gráfico, não uma "
+            "falha do teclado ou desta página.\n\n"
+            "• Atalhos do gerenciador de janelas (Alt+Tab, Super+qualquer "
+            "coisa) são capturados globalmente do mesmo jeito.\n\n"
+            "• Isso não verifica rollover/anti-ghosting — um evento que não "
+            "aparece aqui tanto pode ser o teclado que perdeu quanto o "
+            "ambiente gráfico que engoliu."),
+        "backup_unreadable": "{name} não é um backup que dê para ler ({detail}).",
+        "restoring": "Restaurando a iluminação…",
+        "restoring_keys": "Restaurando a iluminação e o mapa de teclas — são 166 "
+                          "escritas e leva cerca de 17 segundos.",
+        "restore_partial": "Restaurado com falhas: {regions} região(ões) de "
+                           "iluminação, {keys} atribuição(ões) de tecla. O backup "
+                           "continua no disco — repetir o restore resolve.",
+        "profiles_active": "{listed}   (ativo: {active})",
+        "profiles_only_one": "— os outros slots do app do fabricante precisam ser criados",
         "no_backup": "Ainda não há backup — use Backup primeiro",
-        "auto_backup": "Backup da iluminação atual salvo em {path}",
+        "auto_backup": "Backup deste teclado salvo em {path}",
         "device_model": "Modelo",
         "device_pid": "ID USB",
         "device_node": "Nó HID",
         "device_firmware": "Firmware no perfil do fabricante",
         "device_battery": "Bateria",
+        "device_sleep": "Tempo de espera",
+        "sleep_disabled": "desativado",
+        "sleep_minutes": "{minutes} min",
+        "battery_reading": "lendo…",
+        "battery_unknown": "desconhecido",
+        "device_profiles": "Perfis",
         "device_regions": "Regiões de iluminação",
         "yes": "sim",
         "no": "não",
@@ -216,20 +472,6 @@ STRINGS = {
             "O nó HID do teclado é acessível só por root neste sistema.\n\n"
             "Instale a regra udev uma vez e replugue o teclado:\n"
             "    sudo sh packaging/install.sh"
-        ),
-        "keys_todo": (
-            "Remapear teclas depende de CLASS_KEY, ainda não portada.\n\n"
-            "Os métodos GetKeyAssign/SetKeyAssign do driver do fabricante estão\n"
-            "identificados em docs/vendor-reference/tgdevice.js, e o layout de\n"
-            "83 teclas abaixo já vem do perfil de dispositivo da própria Dareu.\n"
-            "Falta escrever os construtores de pacote, um teste byte-match para\n"
-            "cada um e confirmar uma vez no hardware real."
-        ),
-        "macros_todo": (
-            "Macros dependem de CLASS_MACRO, ainda não portada.\n\n"
-            "MacroCreate / SetMacroData / GetMacroIdList existem em\n"
-            "docs/vendor-reference/tgdevice.js e usam a mesma transferência\n"
-            "multi-pacote que este projeto já implementa para a lista de regiões."
         ),
         "effects": {
             # Verbatim from the official software's Brazilian Portuguese string

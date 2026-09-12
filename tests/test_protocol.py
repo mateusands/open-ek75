@@ -459,11 +459,17 @@ def test_only_observed_effects_are_marked_colourless():
 
 
 def test_fn_layer_decodes_to_the_shortcuts_printed_nowhere():
-    """The Fn layer, decoded from the device profile's function ids and HID
-    usages (core/keymap.py).
+    """The Fn layer as decoded from the DEVICE PROFILE (`0101.json`).
 
-    Fn+I really is Print Screen on this keyboard — the owner had to search the
-    web to find that out, which is the whole reason this decoding exists.
+    CORRECTED: this docstring used to say "Fn+I really is Print Screen on this
+    keyboard". It tests no such thing — it decodes the vendor's JSON, and the
+    keyboard was later measured disagreeing with that JSON on 23 assignments.
+    `Fn`+`Space` below is one of them: the profile says "cycle brightness", the
+    keyboard says Space. The assertion stays because decoding the profile
+    correctly is still worth pinning; the claim about hardware does not.
+
+    What the keyboard actually reports is covered by the CLASS_KEY tests and by
+    `open-ek75 keys --diff`. See PROTOCOL.md.
     """
     from ek75.core import keymap, layout
 
@@ -475,6 +481,7 @@ def test_fn_layer_decodes_to_the_shortcuts_printed_nowhere():
     assert shortcuts["L"] == ("End", "End")
     assert shortcuts["F7"] == ("Play / Pause", "Play / Pausar")
     assert shortcuts["F11"] == ("Mute", "Mudo")
+    # NOT what the keyboard does — see the docstring. This pins the decoder.
     assert shortcuts["Space"] == ("Cycle brightness", "Trocar brilho")
 
     # Pass-throughs must not be listed: Fn+Tab is still Tab, and 11 such keys
@@ -526,3 +533,2020 @@ def test_settings_survive_a_round_trip_and_ignore_junk():
         assert settings.load(path) == settings.DEFAULTS
 
         assert settings.load(os.path.join(tmp, "absent.json")) == settings.DEFAULTS
+
+
+# --- CLASS_POWER, read-only --------------------------------------------------
+# Both builders are transcribed from tgdevice.js and both were then exercised
+# against the real keyboard, so the replies below are values the device actually
+# returned — the strongest tier this project has short of a visual confirmation,
+# which does not apply to a read.
+
+def test_get_battery_status_writes_no_profile():
+    """GetBatteryStatus: HDR_SIZE=3, CLASS_POWER(7), PWR_CMD_BAT_STATUS(0)|GET.
+
+    It takes no profile argument because the vendor driver writes none —
+    tgdevice.js's `GetBatteryStatus` sets HDR_STATUS, HDR_SIZE, HDR_CLASS and
+    HDR_COMMAND and stops, leaving HDR_PROFILE at 0. Battery is a property of
+    the keyboard, not of a profile.
+    """
+    expected = _padded(bytes.fromhex("000307800000"))
+    assert protocol.build_get_battery_status() == expected
+
+
+def test_parse_battery_status_as_read_from_hardware():
+    """The reply this keyboard actually returned, plugged in and full:
+    Status=1, Level=100, MaxLevel=100, Critical=0.
+    """
+    resp = _padded(bytes.fromhex("02" + "0407" + "8000" + "00" + "01646400"))
+    info = protocol.parse_battery_status_response(resp)
+    assert info["status"] == 1
+    assert info["level"] == 100
+    assert info["max_level"] == 100
+    assert info["critical"] == 0
+    assert info["percent"] == 100
+
+
+def test_battery_percent_is_scaled_by_max_level_not_assumed_to_be_100():
+    """MaxLevel is a field, so the percentage divides by it. A device reporting
+    Level=3 of MaxLevel=4 is at 75%, not 3%.
+    """
+    resp = _padded(bytes.fromhex("02" + "0407" + "8000" + "00" + "01030400"))
+    assert protocol.parse_battery_status_response(resp)["percent"] == 75
+
+    # MaxLevel 0 must not divide by zero — the percentage is simply unknown.
+    resp = _padded(bytes.fromhex("02" + "0407" + "8000" + "00" + "01000000"))
+    assert protocol.parse_battery_status_response(resp)["percent"] is None
+
+
+def test_get_time_to_sleep_carries_the_profile():
+    """GetTimeToSleep: HDR_SIZE=3, CLASS_POWER(7), PWR_CMD_TIME_2_SLEEP(2)|GET,
+    HDR_PROFILE set — unlike the battery read, the sleep timer is per profile,
+    which is what tgdevice.js's `D[HDR_PROFILE] = A.ProfileId` says.
+    """
+    expected = _padded(bytes.fromhex("000307820100"))
+    assert protocol.build_get_time_to_sleep() == expected           # profile 1 default
+    assert protocol.build_get_time_to_sleep(profile_id=1) == expected
+
+
+def test_parse_time_to_sleep_as_read_from_hardware():
+    """What this keyboard returned for profile 1: Control=1, Second=180.
+
+    180 s is 3 minutes, which is exactly MinSleepTime in the vendor's
+    TK51G0101.dll — the wire is in seconds and the official slider is in
+    minutes. See PROTOCOL.md.
+    """
+    resp = _padded(bytes.fromhex("02" + "0307" + "8201" + "00" + "0100b4"))
+    info = protocol.parse_time_to_sleep_response(resp)
+    assert info["enabled"] is True
+    assert info["seconds"] == 180
+    assert info["minutes"] == 3
+
+
+def test_time_to_sleep_disabled_reports_no_time():
+    """Control==0 means the timer is off, and the vendor driver then reports
+    Second as 0 without reading the two bytes. USB_TIME_2_SLEEP came back this
+    way on the cable.
+    """
+    resp = _padded(bytes.fromhex("02" + "0307" + "8201" + "00" + "00ffff"))
+    info = protocol.parse_time_to_sleep_response(resp)
+    assert info["enabled"] is False
+    assert info["seconds"] == 0
+    assert info["minutes"] == 0
+
+
+# --- CLASS_KEY, read-only ----------------------------------------------------
+
+def test_get_key_assign_layout():
+    """GetKeyAssign: HDR_SIZE=8, CLASS_KEY(1), KEY_CMD_ASSIGN(3)|GET, profile in
+    the header, then keyId and layer as the first two payload bytes.
+
+    Transcribed from tgdevice.js. Layer 0 is the base map, 1 is the Fn layer —
+    confirmed by reading both from the keyboard and matching them against the
+    vendor profile's `default-function-*` and `default-fn-function-*` fields.
+    """
+    assert protocol.build_get_key_assign(1, 0) == _padded(
+        bytes.fromhex("0008018301000100"))
+    assert protocol.build_get_key_assign(1, 1) == _padded(
+        bytes.fromhex("0008018301000101"))
+    # KeyIDs are not a 1..83 range: this keyboard's run to 172 with gaps.
+    assert protocol.build_get_key_assign(172, 1) == _padded(
+        bytes.fromhex("000801830100ac01"))
+
+
+def test_parse_key_assign_as_read_from_hardware():
+    """Esc on the base layer, exactly as this keyboard replied: FunctionId 6
+    (a plain key) with HID usage 41, which is Escape.
+    """
+    resp = _padded(bytes.fromhex("02" + "0801830100" + "01" + "00"
+                                 + "06" + "0029000000"))
+    info = protocol.parse_key_assign_response(resp)
+    assert info["function_id"] == 6
+    assert info["data"] == [0, 41, 0, 0, 0]
+
+
+def test_hid_keys_covers_every_usage_this_keyboard_emits():
+    """The base layer is mostly letters and digits, and the Fn-layer decoder
+    dropped those on purpose as noise. Reused unchanged for the base layer it
+    would leave 66 of 79 keys undescribed, so the table has to be complete.
+
+    This asserts against the keyboard's own profile rather than a hand-written
+    list, so a future device that emits a usage nobody thought of fails here.
+    """
+    from ek75.core import keymap, layout
+
+    used = set()
+    for key in layout.load().keys:
+        for fid, data in ((key.function_id, key.function_data),
+                          (key.fn_function_id, key.fn_function_data)):
+            if fid == 6 and data[1]:
+                used.add(data[1])
+
+    missing = sorted(u for u in used if u not in keymap.HID_KEYS)
+    assert not missing, f"usages with no label: {missing}"
+
+
+def test_describe_takes_raw_values_so_the_rule_exists_once():
+    """`describe_fn` decoded a Key's stored JSON fields; live data arrives as a
+    (function_id, data) pair with no Key around it. One decoder answers both, or
+    the rule drifts between them.
+    """
+    from ek75.core import keymap
+
+    assert keymap.describe(6, [0, 41, 0, 0, 0]) == ("Esc", "Esc")
+    assert keymap.describe(6, [0, 4, 0, 0, 0]) == ("A", "A")
+    assert keymap.describe(6, [0, 70, 0, 0, 0]) == ("Print Screen", "Print Screen")
+    assert keymap.describe(8, [1, 148, 0, 0, 0]) == ("My computer", "Meu computador")
+    assert keymap.describe(54, [1, 0, 0, 0, 0])[0] == "Cycle brightness"
+
+    # This line used to assert `is None` for a bare modifier. That was the old
+    # behaviour, and it was wrong rather than merely terse: see
+    # test_a_modifier_is_part_of_the_assignment_not_noise below. The filtering
+    # it stood for now lives in `is_bare_modifier`, where the shortcut lists
+    # that actually want it can ask for it.
+    assert keymap.describe(6, [2, 0, 0, 0, 0]) == ("Left Shift", "Shift esquerdo")
+    assert keymap.is_bare_modifier(6, [2, 0, 0, 0, 0]) is True
+
+
+def test_a_modifier_is_part_of_the_assignment_not_noise():
+    """`data[0]` is the HID modifier bitmask and dropping it reports a wrong key.
+
+    `describe` read only `data[1]`, the usage. For a key assigned Ctrl+C the
+    reply is `[0x01, 0x06, ...]` and the old code called that "C" — not an
+    incomplete answer but a false one, in the command whose entire purpose is
+    telling the user what a key does.
+
+    Two independent sources agree on the bitmask, neither of them this code:
+
+    1. The USB HID boot-keyboard report's modifier byte, bit 0 through bit 7 =
+       LCtrl LShift LAlt LGUI RCtrl RShift RAlt RGUI.
+    2. This keyboard, read live over KEY_CMD_ASSIGN. Its eight modifier keys
+       answered on the base layer with exactly those single-bit values:
+       L-Ctrl 1, L-Shift 2, L-Alt 4, L-Win 8, R-Ctrl 16, R-Shift 32, R-Alt 64.
+       (No key on this model carries bit 7, Right GUI.)
+    """
+    from ek75.core import keymap
+
+    # Source 2, transcribed from the live read, key label -> data[0].
+    measured = {"L-Ctrl": 1, "L-Shift": 2, "L-Alt": 4, "L-Win": 8,
+                "R-Ctrl": 16, "R-Shift": 32, "R-Alt": 64}
+    expected_en = {"L-Ctrl": "Left Ctrl", "L-Shift": "Left Shift",
+                   "L-Alt": "Left Alt", "L-Win": "Left Win",
+                   "R-Ctrl": "Right Ctrl", "R-Shift": "Right Shift",
+                   "R-Alt": "Right Alt"}
+    for label, bit in measured.items():
+        described = keymap.describe(6, [bit, 0, 0, 0, 0])
+        assert described is not None, f"{label} (data[0]={bit}) went undescribed"
+        assert described[0] == expected_en[label]
+        assert keymap.is_bare_modifier(6, [bit, 0, 0, 0, 0]) is True
+
+    # The defect this test exists for: a modifier combined with a usage.
+    assert keymap.describe(6, [0x01, 0x06, 0, 0, 0]) == ("Left Ctrl + C",
+                                                         "Ctrl esquerdo + C")
+    assert keymap.is_bare_modifier(6, [0x01, 0x06, 0, 0, 0]) is False
+
+    # Several at once, in bit order regardless of how they were set.
+    assert keymap.describe(6, [0x03, 0x06, 0, 0, 0])[0] == "Left Ctrl + Left Shift + C"
+
+    # Bit 7 has no key on this model but the decoder must not silently drop it.
+    assert keymap.describe(6, [0x80, 0, 0, 0, 0])[0] == "Right Win"
+
+    # Neither a modifier nor a usage is genuinely nothing.
+    assert keymap.describe(6, [0, 0, 0, 0, 0]) is None
+
+
+def test_function_id_47_is_named_because_the_keyboard_emits_it():
+    """`Fn`+`L-Win` answers with function id 47, which had no name.
+
+    It surfaced the way these always will: reading the live base and Fn layers
+    and looking for rows that fell through to the raw `fid=NN` fallback. The
+    vendor's index in `docs/vendor-reference/device.js` calls 47 `LockWin`,
+    sitting between `ShowBatteryLevel` (46) and `LightingSpeed` (48) — both
+    already in the table, which is what makes the identification an id lookup
+    in a list this project already trusts rather than an inference.
+
+    The device profile does not carry this assignment, so no profile-driven
+    test could have caught it; only the keyboard knows.
+    """
+    from ek75.core import keymap
+
+    assert keymap.describe(47, [2, 0, 0, 0, 0]) == ("Lock the Windows key",
+                                                     "Travar a tecla Windows")
+
+
+def test_set_key_assign_layout():
+    """Port of tgdevice.js `SetKeyAssign(profileId, keyId, layer, fid, data[5])`.
+
+    Byte-identical to the confirmed `GetKeyAssign` header, with SET_CMD instead
+    of GET_CMD and three more payload bytes. Expected bytes composed by hand
+    from the vendor source, not by running the builder:
+
+      00 status | 08 size | 01 class | 03 cmd (3 | SET=0) | 01 profile | 00 pad
+      32 keyId(50) | 01 layer(Fn) | 06 functionId | 00 2f 00 00 00 data
+
+    The value used is the real one this keyboard stores for `Fn`+`[` — plain
+    `[`, HID usage 0x2f — because that is the assignment the hardware round
+    trip in PROTOCOL.md actually writes.
+    """
+    expected = _padded(bytes.fromhex("000801030100" + "320106" + "002f000000"))
+    got = protocol.build_set_key_assign(
+        key_id=50, layer=protocol.LAYER_FN, function_id=6,
+        data=[0, 0x2F, 0, 0, 0], profile_id=1)
+    assert got == expected
+
+    # Same header as the GET that is already confirmed on hardware, except for
+    # the command byte and the size. If these ever diverge, one of them is wrong.
+    get = protocol.build_get_key_assign(50, protocol.LAYER_FN, profile_id=1)
+    assert got[protocol.HDR_CLASS] == get[protocol.HDR_CLASS]
+    assert got[protocol.HDR_PROFILE] == get[protocol.HDR_PROFILE]
+    assert got[protocol.HDR_SIZE] == get[protocol.HDR_SIZE] == 8
+    assert got[protocol.HDR_COMMAND] == protocol.KEY_CMD_ASSIGN | protocol.SET_CMD
+    assert get[protocol.HDR_COMMAND] == protocol.KEY_CMD_ASSIGN | protocol.GET_CMD
+
+
+def test_set_key_assign_refuses_anything_it_cannot_put_on_the_wire():
+    """Every input is bounds-checked, because this one writes persistent memory.
+
+    A four-byte `data` is the dangerous case: it would silently send a zero
+    where the keyboard expects the fifth byte, and nothing downstream would
+    notice. An out-of-range `key_id` is worse — truncated into a byte it would
+    address a *different key*, changing something the caller never named.
+    """
+    ok = dict(key_id=50, layer=protocol.LAYER_FN, function_id=6,
+              data=[0, 0x2F, 0, 0, 0])
+
+    def rejects(**overrides):
+        bad = dict(ok, **overrides)
+        try:
+            protocol.build_set_key_assign(**bad)
+        except ValueError:
+            return True
+        return False
+
+    assert rejects(data=[0, 0x2F, 0, 0])            # four bytes
+    assert rejects(data=[0, 0x2F, 0, 0, 0, 0])      # six
+    assert rejects(data=[0, 256, 0, 0, 0])          # not a byte
+    assert rejects(data=[0, -1, 0, 0, 0])
+    assert rejects(layer=2)                          # neither base nor Fn
+    assert rejects(key_id=256)
+    assert rejects(key_id=-1)
+    assert rejects(function_id=256)
+
+    # And the valid call still works, so the guard is not simply refusing all.
+    assert len(protocol.build_set_key_assign(**ok)) == protocol.REPORT_SIZE
+
+
+def test_backup_round_trips_a_key_map_through_json():
+    """`read_key_map` is keyed by (key_id, layer) tuples; JSON keys are strings.
+
+    `json.dump` raises TypeError on a tuple key, so the composite string is
+    load-bearing and not cosmetic. This asserts the tuples come back as tuples
+    of ints — a version that returned strings would let a caller build a packet
+    addressing key "50" instead of key 50.
+    """
+    import tempfile
+    from ek75.core import state
+
+    keys = {(50, 1): {"function_id": 6, "data": [0, 47, 0, 0, 0]},
+            (1, 0): {"function_id": 6, "data": [0, 41, 0, 0, 0]},
+            (170, 1): None}
+    regions = {1: {"effect": 1, "flag": 0, "speed": 2,
+                   "colors": [[255, 0, 0]], "brightness": 153}}
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "backup.json")
+        state.save(path, regions, keys=keys)
+        assert state.load(path) == regions
+        assert state.load_keys(path) == keys
+
+
+def test_the_real_settle_actually_waits():
+    """The burst test replaces `device.settle`, so nothing there runs this one.
+
+    Without this, a `settle` that raised, returned early, or lost its `time`
+    import would pass every other test in the file — the fakes would keep
+    counting calls to something that no longer waits.
+    """
+    import time as _time
+    from ek75.core import device
+
+    assert device.SETTLE_AFTER_BURST >= 0.1, (
+        "measured: 50 ms was still wrong 4 times in 8, 100 ms was clean")
+
+    start = _time.monotonic()
+    device.settle()
+    waited = _time.monotonic() - start
+    assert waited >= device.SETTLE_AFTER_BURST * 0.9, (
+        f"settle returned after {waited:.3f}s, expected "
+        f"{device.SETTLE_AFTER_BURST}s")
+
+
+def test_an_aborted_lighting_restore_still_settles():
+    """The same guarantee as the key-map burst, on the other burst producer.
+
+    Reviewed and found untested: `Explodes` only ever ran against
+    `restore_key_map`, so `restore`'s own `finally` was asserted by nothing.
+    """
+    from ek75.core import lighting
+
+    naps = []
+
+    class Explodes:
+        settle = staticmethod(lambda: naps.append(1))
+
+        @staticmethod
+        def command_process(fd, packet, **kw):
+            raise OSError("the device went away mid-burst")
+
+    real = lighting.device
+    session = lighting.Session.__new__(lighting.Session)
+    session.fd = None
+    try:
+        lighting.device = Explodes
+        try:
+            session.restore({1: {"effect": 1, "flag": 0, "speed": 0,
+                                 "colors": [(255, 0, 0)], "brightness": 100}})
+        except OSError:
+            pass
+        else:
+            raise AssertionError("the error should not have been swallowed")
+        assert len(naps) == 1, "an aborted lighting restore skipped the settle"
+
+        # A malformed entry raises before anything is sent, so there is no
+        # burst to recover from and no reason to wait 150 ms.
+        naps.clear()
+        try:
+            session.restore({1: {"colors": [(255, 0, 0)]}})   # no "effect"
+        except KeyError:
+            pass
+        else:
+            raise AssertionError("a missing key should have raised")
+        assert naps == [], "settled after sending nothing"
+
+        # The same on the key-map side, which is the case review named.
+        naps.clear()
+        try:
+            session.restore_key_map({(1, 0): {}})            # no "function_id"
+        except KeyError:
+            pass
+        else:
+            raise AssertionError("a missing key should have raised")
+        assert naps == [], "settled after sending nothing"
+    finally:
+        lighting.device = real
+
+
+def test_assign_key_reports_what_the_keyboard_stored_not_what_was_asked():
+    """Write, let the link settle, then read — and return the read.
+
+    The requested value and the stored value can differ, and only the second one
+    is true. Returning the request would make the UI a mirror of its own input,
+    which is the exact failure `HIDIOCSFEATURE` invites: the ioctl succeeds
+    whether or not the firmware liked the packet.
+
+    The settle sits between the two because a user clicking Apply repeatedly
+    turns single writes into a burst, and a read inside a burst returns a
+    coherent earlier state. One isolated write then a read was measured correct
+    30/30, but "isolated" is not something this method can promise.
+    """
+    from ek75.core import lighting, protocol
+
+    calls = []
+
+    class Keyboard:
+        """Stores the write, and answers the read with something different."""
+        settle = staticmethod(lambda: calls.append("settle"))
+
+        @staticmethod
+        def command_process(fd, packet, **kw):
+            is_get = packet[protocol.HDR_COMMAND] & protocol.GET_CMD
+            calls.append("read" if is_get else "write")
+            if not is_get:
+                return packet
+            reply = bytearray(protocol.REPORT_SIZE)
+            reply[protocol.HDR_STATUS] = 0x02
+            reply[protocol.PAYLOAD_BASE + 2] = 6
+            reply[protocol.PAYLOAD_BASE + 3:protocol.PAYLOAD_BASE + 8] = \
+                bytes([0, 99, 0, 0, 0])              # NOT what was requested
+            return bytes(reply)
+
+    real = lighting.device
+    session = lighting.Session.__new__(lighting.Session)
+    session.fd = None
+    try:
+        lighting.device = Keyboard
+        got = session.assign_key(50, protocol.LAYER_FN, 6, [0, 71, 0, 0, 0])
+    finally:
+        lighting.device = real
+
+    assert calls == ["write", "settle", "read"], calls
+    assert got == {"function_id": 6, "data": [0, 99, 0, 0, 0]}, (
+        "returned the requested value instead of the stored one")
+
+
+def test_assign_key_says_nothing_rather_than_guessing_when_the_write_is_refused():
+    """A write the firmware never acknowledged must not be followed by a read
+    that happens to succeed and looks like confirmation."""
+    from ek75.core import lighting, protocol
+
+    calls = []
+
+    class Refuses:
+        settle = staticmethod(lambda: calls.append("settle"))
+
+        @staticmethod
+        def command_process(fd, packet, **kw):
+            calls.append("write")
+            return None
+
+    real = lighting.device
+    session = lighting.Session.__new__(lighting.Session)
+    session.fd = None
+    try:
+        lighting.device = Refuses
+        got = session.assign_key(50, protocol.LAYER_FN, 6, [0, 71, 0, 0, 0])
+    finally:
+        lighting.device = real
+
+    assert got is None
+    assert calls == ["write"], f"kept going after a refused write: {calls}"
+
+
+def test_the_keys_that_must_not_be_remapped_are_found_in_the_live_map():
+    """The escape hatch is `Fn`+`Esc`, so BOTH of those keys have to be locked.
+
+    An earlier version of this plan locked only the `Fn` key. That leaves the
+    hatch just as breakable from the other end: remap `Esc` and `Fn`+`Esc` no
+    longer reaches the factory reset, which is the recovery path every other
+    safety claim about key writing rests on.
+
+    Derived from the live map rather than from hardcoded ids, because the ids
+    are this PID's. The keyboard names them itself: one key carries the `Fn`
+    modifier (function id 10) and one carries `Factory reset` (44). On the unit
+    this was written against those are 107 and 1, and nothing here says so.
+    """
+    from ek75.core import keymap
+
+    key_map = {
+        (1, 0): {"function_id": 6, "data": [0, 41, 0, 0, 0]},    # Esc
+        (1, 1): {"function_id": 44, "data": [0, 0, 0, 0, 0]},    # Fn+Esc = reset
+        (107, 0): {"function_id": 10, "data": [64, 0, 0, 0, 0]},  # Fn
+        (107, 1): {"function_id": 10, "data": [64, 0, 0, 0, 0]},
+        (61, 0): {"function_id": 6, "data": [0, 4, 0, 0, 0]},     # A, remappable
+        (61, 1): None,
+    }
+    assert keymap.locked_keys(key_map) == {1, 107}
+
+    # A keyboard that reports neither locks nothing — and a caller that then
+    # writes has no hatch, which is the page's problem to say out loud, not
+    # something to paper over here with a guessed id.
+    assert keymap.locked_keys({(61, 0): {"function_id": 6,
+                                          "data": [0, 4, 0, 0, 0]}}) == set()
+    assert keymap.locked_keys({}) == set()
+    assert keymap.locked_keys({(9, 0): None}) == set()
+
+
+def test_find_key_for_keyboard_usage_reads_the_live_map_not_the_profile():
+    """The reverse of `describe()`: a HID usage a keypress resolved to, in,
+    which physical key (and which LAYER) currently sends it out. Deliberately
+    built from a hand-written live map rather than `layout.load()`'s static
+    profile — the whole point (`fn_shortcuts_from_map`'s docstring) is that
+    this project trusts the keyboard's own answer over the profile, which is
+    wrong for 23 assignments on the unit this was measured against.
+    """
+    from ek75.core import keymap
+
+    key_map = {
+        (42, 0): {"function_id": 6, "data": [0, 4, 0, 0, 0]},      # A
+        (1, 0): {"function_id": 6, "data": [0, 41, 0, 0, 0]},      # Esc
+        (61, 1): {"function_id": 6, "data": [0, 4, 0, 0, 0]},      # Fn+something -> A too
+        (9, 0): None,                                             # did not answer
+    }
+    assert keymap.find_key_for_keyboard_usage(key_map, 4) in ((42, 0), (61, 1))
+    assert keymap.find_key_for_keyboard_usage(key_map, 41) == (1, 0)
+    assert keymap.find_key_for_keyboard_usage(key_map, 200) is None
+    assert keymap.find_key_for_keyboard_usage({}, 4) is None
+
+
+def test_find_key_for_keyboard_usage_does_not_confuse_a_bare_key_with_a_modified_one():
+    """A key remapped to Ctrl+C sends the same `data[1]` (6, usage for 'C')
+    as the plain C key, plus a modifier bit an ordinary, unshifted keysym
+    press never carries. Found by `/code-review`: the first version of this
+    function only checked `data[1]`, so whichever of the two happened to come
+    first in `key_map`'s iteration order answered for BOTH the bare usage and
+    the Ctrl+C combo — a real defect, not a hypothetical one, since Python
+    dict order depends on insertion order and this project reads the map
+    fresh from 166 device replies each session.
+    """
+    from ek75.core import keymap
+
+    key_map = {
+        (99, 0): {"function_id": 6, "data": [0x01, 6, 0, 0, 0]},    # Ctrl+C
+        (61, 0): {"function_id": 6, "data": [0, 6, 0, 0, 0]},       # bare C
+    }
+    assert keymap.find_key_for_keyboard_usage(key_map, 6) == (61, 0)
+
+
+def test_find_key_for_keyboard_usage_translates_a_modifier_usage_to_its_bit():
+    """0xE0-0xE7 is the encoding a MACRO step uses for a modifier
+    (`HID_MODIFIER_USAGES`) — CombineKey (6) never puts a modifier there as
+    `data[1]`; it lives in `data[0]`'s bitmask instead (`HID_MODIFIERS`). A
+    keypress resolving to usage 0xE0 (Left Ctrl) must still find the actual
+    Ctrl key, which the live map reports as a BARE modifier — `data[1]==0`,
+    `data[0]==0x01` — not as an ordinary usage match.
+    """
+    from ek75.core import keymap
+
+    key_map = {
+        (107, 0): {"function_id": 6, "data": [0x01, 0, 0, 0, 0]},   # L-Ctrl, bare
+        (108, 0): {"function_id": 6, "data": [0x02, 0, 0, 0, 0]},   # L-Shift, bare
+        # A combo (Ctrl+C) must NOT be mistaken for the bare Ctrl key itself —
+        # its data[1] is non-zero, so the modifier-usage branch must reject it.
+        (109, 0): {"function_id": 6, "data": [0x01, 6, 0, 0, 0]},
+    }
+    assert keymap.find_key_for_keyboard_usage(key_map, 0xE0) == (107, 0)  # Left Ctrl
+    assert keymap.find_key_for_keyboard_usage(key_map, 0xE1) == (108, 0)  # Left Shift
+    assert keymap.find_key_for_keyboard_usage(key_map, 0xE4) is None      # no R-Ctrl here
+
+
+def test_find_key_for_consumer_usage_reads_the_live_map():
+    """`find_key_for_keyboard_usage`'s sibling for `MediaKeys` (8) — the
+    Consumer page, checked against this project's own `CONSUMER_KEYS` usage
+    numbers rather than made-up ones.
+    """
+    from ek75.core import keymap
+
+    key_map = {
+        (6, 1): {"function_id": 8, "data": [0, 0xB7, 0, 0, 0]},      # Stop
+        (10, 1): {"function_id": 8, "data": [1, 0x94, 0, 0, 0]},     # My computer
+        (61, 0): {"function_id": 6, "data": [0, 4, 0, 0, 0]},        # unrelated
+    }
+    assert keymap.find_key_for_consumer_usage(key_map, 0xB7) == (6, 1)
+    assert keymap.find_key_for_consumer_usage(key_map, 0x194) == (10, 1)
+    assert keymap.find_key_for_consumer_usage(key_map, 0xCD) is None
+    assert keymap.find_key_for_consumer_usage({}, 0xB7) is None
+
+
+def test_describe_assignment_is_the_one_formatter_both_pages_share():
+    """`gui/pages/keys.py` and `gui/pages/key_test.py` each had their own
+    private `_describe`, byte-for-byte identical — found by `/code-review`.
+    One shared function in `core/keymap.py` instead, so a future fix to this
+    formatting cannot land in one page and not the other.
+    """
+    from ek75.core import keymap
+
+    assert keymap.describe_assignment(None, "en") == "—"
+    assert keymap.describe_assignment(
+        {"function_id": 6, "data": [0, 41, 0, 0, 0]}, "en") == "Esc"
+    assert keymap.describe_assignment(
+        {"function_id": 6, "data": [0, 41, 0, 0, 0]}, "pt") == "Esc"
+    # function_id 99 names nothing in FUNCTION_NAMES — the fallback, not a
+    # guessed label.
+    assert keymap.describe_assignment(
+        {"function_id": 99, "data": [1, 2, 3, 4, 5]}, "en") == "fid=99 [1, 2, 3, 4, 5]"
+
+
+def test_only_vetted_functions_can_be_copied_from_one_key_to_another():
+    """Copying bytes the keyboard produced is safe only if the *function* is.
+
+    "Replay what this device reported" keeps the write inside validated byte
+    patterns, but it says nothing about whether the result is sane. Copying
+    `Factory reset` (44) onto a letter means one stray keystroke wipes the
+    keyboard; copying `Knob rotation` (39) onto a key that cannot rotate is
+    nonsense; copying the `Fn` modifier (10) makes a second Fn.
+
+    So the copy source is an allowlist, not everything the device reports.
+    Lighting and layout toggles are on it because losing one costs a setting;
+    resets, pairing and the knob are off it because losing one costs the
+    keyboard, the connection, or nothing sensible at all.
+    """
+    from ek75.core import keymap
+
+    for safe in (45, 46, 47, 48, 49, 53, 54, 55):
+        assert keymap.is_copyable(safe), f"function {safe} should be copyable"
+
+    for unsafe, why in ((44, "factory reset"), (10, "the Fn modifier"),
+                        (41, "Bluetooth pairing"), (42, "2.4G pairing"),
+                        (39, "knob rotation"), (40, "knob press"),
+                        (1, "mouse button"), (32, "mouse cursor")):
+        assert not keymap.is_copyable(unsafe), f"{why} must not be copyable"
+
+    # 6 and 8 are the keyboard and media usages, which the picker offers
+    # directly and builds itself — they are not reached through the copy path.
+    assert not keymap.is_copyable(6)
+    assert not keymap.is_copyable(8)
+
+
+def test_a_burst_leaves_the_link_quiet_exactly_once():
+    """A run of writes settles at the end, not per item, and not never.
+
+    Measured: writes always land, but while a burst is in flight a *read*
+    returns a coherent earlier state — 4/8 wrong at 0 ms and at 50 ms after a
+    24-command burst, 0/8 at 100 ms. See PROTOCOL.md, "Under sustained traffic,
+    reads trail the keyboard's real state".
+
+    Once, at the end: 166 x 150 ms per item would add 25 s to a key-map
+    restore. In a `finally`: a burst cut short by an exception is exactly when
+    the caller is most likely to read straight afterwards to find out what
+    happened. And not at all when nothing was sent, because there is then no
+    burst to recover from.
+    """
+    from ek75.core import device, lighting
+
+    naps = []
+
+    class Recorder:
+        SETTLE_AFTER_BURST = device.SETTLE_AFTER_BURST
+
+        @staticmethod
+        def settle():
+            naps.append(1)
+
+        @staticmethod
+        def command_process(fd, packet, **kw):
+            return packet
+
+    class Explodes(Recorder):
+        @staticmethod
+        def command_process(fd, packet, **kw):
+            raise OSError("the device went away mid-burst")
+
+    real = lighting.device
+    session = lighting.Session.__new__(lighting.Session)
+    session.fd = None
+    try:
+        lighting.device = Recorder
+        session.restore({1: {"effect": 1, "flag": 0, "speed": 0,
+                             "colors": [(255, 0, 0)], "brightness": 100},
+                         4: {"effect": 1, "flag": 0, "speed": 0,
+                             "colors": [(0, 255, 0)], "brightness": 200}})
+        assert len(naps) == 1, f"two regions settled {len(naps)} times"
+
+        naps.clear()
+        session.restore_key_map({(50, 1): {"function_id": 6,
+                                            "data": [0, 47, 0, 0, 0]},
+                                  (60, 0): {"function_id": 6,
+                                            "data": [0, 57, 0, 0, 0]}})
+        assert len(naps) == 1, f"two keys settled {len(naps)} times"
+
+        # Nothing sent means no burst to recover from.
+        naps.clear()
+        session.restore({})
+        session.restore_key_map({(99, 1): None})     # the only entry is skipped
+        assert naps == [], "settled without having sent anything"
+
+        # An exception mid-burst must still leave the link quiet.
+        naps.clear()
+        lighting.device = Explodes
+        try:
+            session.restore_key_map({(50, 1): {"function_id": 6,
+                                                "data": [0, 47, 0, 0, 0]}})
+        except OSError:
+            pass
+        else:
+            raise AssertionError("the error should not have been swallowed")
+        assert len(naps) == 1, "an aborted burst skipped the settle"
+    finally:
+        lighting.device = real
+
+
+def test_restore_keeps_an_empty_colour_list_instead_of_painting_it_black():
+    """An empty colour list is the RGB/rainbow mode, not "no colour chosen".
+
+    `restore` did `info["colors"] or [(0, 0, 0)]`, and `[]` is falsy, so every
+    region saved in rainbow mode came back solid black. The backup recorded the
+    state correctly; the restore threw it away — the worst shape for this bug,
+    because the file looks right and the keyboard does not.
+
+    The firmware takes an empty list and reports it back as empty: sending
+    `colors=[]` to region 1 with Wave read back as `colors=[]` on hardware, so
+    there is nothing to substitute and no reason to.
+
+    The `or` was not arbitrary — `set_effect` needs at least one colour for
+    effects that take one. That case is a missing/None list, which is a
+    different thing from an empty one, and only it gets the fallback.
+    """
+    from ek75.core import lighting
+
+    sent = []
+
+    class Recorder:
+        settle = staticmethod(lambda: None)          # the burst's quiet period
+
+        @staticmethod
+        def command_process(fd, packet, **kw):
+            sent.append(packet)
+            return packet
+
+    real = lighting.device
+    try:
+        lighting.device = Recorder
+        session = lighting.Session.__new__(lighting.Session)
+        session.fd = None
+        session.restore({1: {"effect": 5, "flag": 0, "speed": 2,
+                             "colors": [], "brightness": 153}})
+    finally:
+        lighting.device = real
+
+    # The first packet is the effect write; its colour count must be zero.
+    effect_packet = sent[0]
+    assert effect_packet[protocol.PAYLOAD_BASE + 1] == 5          # Wave
+    assert effect_packet[protocol.PAYLOAD_BASE + 4] == 0, (
+        "restore substituted a colour for the rainbow mode")
+
+    # And a genuinely absent list still gets the fallback it was there for.
+    sent.clear()
+    try:
+        lighting.device = Recorder
+        session.restore({1: {"effect": 1, "flag": 0, "speed": 0,
+                             "colors": None, "brightness": 100}})
+    finally:
+        lighting.device = real
+    assert sent[0][protocol.PAYLOAD_BASE + 4] == 1
+
+
+def test_restore_key_map_reports_each_key_rather_than_one_verdict():
+    """166 writes that mostly worked is not a success, and must not look like one.
+
+    `restore` already reports per-region for the same reason. A caller handed a
+    single boolean cannot say which key was left wrong, and the honest failure
+    mode for a key map is partial: one NAK in the middle leaves the keyboard in
+    a state that is neither the old one nor the new one.
+
+    Entries recorded as None are skipped, not written: None means "this key did
+    not answer when the backup was taken", and turning it into
+    `function_id=0, data=[0]*5` would assign the key *nothing* — a real and
+    destructive assignment rather than a missing one.
+    """
+    from ek75.core import lighting
+
+    written = []
+
+    class OneKeyRefuses:
+        """Acknowledges everything except key 70, which never replies."""
+        settle = staticmethod(lambda: None)
+
+        @staticmethod
+        def command_process(fd, packet, **kw):
+            key_id = packet[protocol.PAYLOAD_BASE + 0]
+            layer = packet[protocol.PAYLOAD_BASE + 1]
+            written.append((key_id, layer))
+            return None if key_id == 70 else packet
+
+    key_map = {
+        (50, 1): {"function_id": 6, "data": [0, 47, 0, 0, 0]},
+        (70, 1): {"function_id": 6, "data": [0, 51, 0, 0, 0]},
+        (60, 0): {"function_id": 6, "data": [0, 57, 0, 0, 0]},
+        (99, 1): None,
+    }
+
+    real = lighting.device
+    try:
+        lighting.device = OneKeyRefuses
+        session = lighting.Session.__new__(lighting.Session)
+        session.fd = None
+        results = session.restore_key_map(key_map)
+    finally:
+        lighting.device = real
+
+    assert dict(results) == {(50, 1): True, (70, 1): False, (60, 0): True}
+    assert (99, 1) not in dict(results)              # None was skipped...
+    assert (99, 1) not in written                    # ...and never reached the wire
+    assert sorted(written) == [(50, 1), (60, 0), (70, 1)]
+
+
+def test_saving_lighting_alone_does_not_destroy_a_saved_key_map():
+    """`keys=None` means "nothing to say about keys", not "delete them".
+
+    The GUI's backup button calls `state.save(path, regions)` with no key map,
+    and `--lighting-only` does the same. Both write to the same default path the
+    CLI uses. Without this, backing up lighting from the GUI silently discards
+    166 key assignments the CLI had saved there — destroying a backup is a much
+    worse outcome than failing to make one, and it happens with no error.
+
+    The rule lives in `save` rather than at each call site, so a future third
+    caller cannot reintroduce it by forgetting.
+    """
+    import tempfile
+    from ek75.core import state
+
+    keys = {(50, 1): {"function_id": 6, "data": [0, 47, 0, 0, 0]}}
+    first = {1: {"effect": 1, "flag": 0, "speed": 2,
+                 "colors": [[255, 0, 0]], "brightness": 100}}
+    second = {1: {"effect": 3, "flag": 0, "speed": 1,
+                  "colors": [], "brightness": 200}}
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "backup.json")
+        state.save(path, first, keys=keys)
+        state.save(path, second)                     # lighting only, as the GUI does
+
+        assert state.load(path) == second            # the lighting did update
+        assert state.load_keys(path) == keys         # and the key map survived
+
+    # An explicitly empty map is a different statement and must be honoured.
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "backup.json")
+        state.save(path, first, keys=keys)
+        state.save(path, second, keys={})
+        assert state.load_keys(path) == {}
+
+    # The same rule on the other axis: `backup --keys-only` must not wipe the
+    # lighting it was told not to touch. Same decision, so it lives in the same
+    # place rather than being fixed once per direction.
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "backup.json")
+        state.save(path, first, keys=keys)
+        state.save(path, None, keys={(1, 0): {"function_id": 6,
+                                               "data": [0, 41, 0, 0, 0]}})
+        assert state.load(path) == first             # the lighting survived
+        assert state.load_keys(path) == {(1, 0): {"function_id": 6,
+                                                   "data": [0, 41, 0, 0, 0]}}
+
+
+def test_a_backup_written_before_keys_existed_still_loads():
+    """Every backup on disk today has no "keys" section, and `load` had no guard.
+
+    Two separate promises: `load` keeps returning the regions it always did,
+    and `load_keys` says None rather than raising KeyError or inventing {}.
+    None and {} must stay distinguishable — one means "this file predates key
+    backups", the other "a key map was recorded and was empty", and a caller
+    about to write to hardware should treat them differently.
+    """
+    import json as _json
+    import tempfile
+    from ek75.core import state
+
+    legacy = {"timestamp": "2026-09-07T23:31:00",
+              "regions": {"1": {"effect": 1, "flag": 0, "speed": 2,
+                                 "colors": [[0, 255, 0]], "brightness": 200}}}
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "old.json")
+        with open(path, "w") as f:
+            _json.dump(legacy, f)
+
+        assert state.load(path) == {1: legacy["regions"]["1"]}
+        assert state.load_keys(path) is None
+
+        # A lighting-only backup written today must look the same to load_keys.
+        fresh = os.path.join(tmp, "fresh.json")
+        state.save(fresh, {1: legacy["regions"]["1"]})
+        assert state.load_keys(fresh) is None
+
+
+def test_how_many_colours_each_effect_actually_uses():
+    """Per-effect, from the vendor's own table — and it matches the hardware.
+
+    `OEMDriver.Pages.PageLedTg::CheckCustomColorCount` in the Windows app
+    reduces to: effects 1, 4, 9, 20, 21, 22 and 132 take one colour; `Starlit`
+    (11) and `Breathing` (2) take more; everything else takes one. The `Ws`,
+    `Qf` and `Jm` pages carry the identical method, so it is a framework rule
+    rather than this model's quirk.
+
+    Three independent agreements with what a human saw on this keyboard:
+    `Static` showed one colour (listed as 1), `Wave` showed one (the default
+    branch), and `Breathing` cycled red, green and blue in order (listed as
+    multi). The table was read out of the binary after those observations, not
+    used to predict them.
+
+    Each number is the largest one something can vouch for, and they do not
+    share a source. `Breathing` gets 3 because three were watched cycling; the
+    vendor's 2 is its UI's limit, not the firmware's. 4 and 5 are not offered,
+    because the wire allowing them is not evidence that they render.
+
+    `Starlit` gets the vendor's 2 and no more. An earlier draft gave it
+    MAX_COLORS purely because it shares a branch with `Breathing` in that table
+    — which says nothing about `Starlit`, which nobody has looked at. That is
+    the "inventing capability" this project exists to not do.
+    """
+    assert protocol.max_colors_for(protocol.EFFECT_BREATHING) == 3
+    assert protocol.max_colors_for(protocol.EFFECT_STARLIT) == 2
+    assert all(n <= protocol.MAX_COLORS
+               for n in protocol.COLORS_PER_EFFECT.values())
+
+    for single in (protocol.EFFECT_STATIC, protocol.EFFECT_REACTIVE,
+                   protocol.EFFECT_RUNNING_LIGHT, protocol.EFFECT_RAINBOW_W,
+                   protocol.EFFECT_LIGHT_WAVE, protocol.EFFECT_STEADY_STREAM,
+                   protocol.EFFECT_WAVE):
+        assert protocol.max_colors_for(single) == 1, f"effect {single}"
+
+    # An effect nobody has classified falls to the safe answer, not to five.
+    assert protocol.max_colors_for(200) == 1
+
+
+def test_the_packet_carries_every_colour_it_is_handed():
+    """The packet carries every colour; the effects checked draw `colors[0]` alone.
+
+    Both halves are asserted here because they are separate facts and the
+    project keeps getting caught conflating them. Sent, stored and read back:
+    two, three and five colours, byte-identical, on `Static`, `Wave`,
+    `Breathing` and `RainbowW`. Looked at by a human: `Static` with red+green+
+    blue showed all red, and `Wave` with the same three showed all red sweeping.
+
+    `Wave` is the load-bearing half of that. A still effect ignoring a list
+    explains itself away; an animated one is where bands or a gradient would be
+    unmistakable, and it drew one colour too.
+
+    Confirmed for `Static` and `Wave` only, and NOT true in general — see
+    `test_how_many_colours_each_effect_actually_uses` above. `Breathing` draws
+    the whole list, one colour per breath, which is what an earlier version of
+    this docstring got wrong by generalising from two effects.
+
+    This test is about the packet, which must carry every colour regardless of
+    what any one effect does with them.
+    """
+    packet = protocol.build_set_lighting_effect(
+        1, protocol.EFFECT_STATIC,
+        [(255, 0, 0), (0, 255, 0), (0, 0, 255)], flag=0, speed=2)
+
+    assert packet[protocol.PAYLOAD_BASE + 4] == 3, "the count must be the real one"
+    assert list(packet[protocol.PAYLOAD_BASE + 5:protocol.PAYLOAD_BASE + 14]) == \
+        [255, 0, 0, 0, 255, 0, 0, 0, 255], "every colour must reach the wire"
+
+    # At the cap itself, which three colours would not have caught: a builder
+    # that silently stopped after three would satisfy every assertion above.
+    full = [(1, 2, 3), (4, 5, 6), (7, 8, 9), (10, 11, 12), (13, 14, 15)]
+    packet = protocol.build_set_lighting_effect(1, protocol.EFFECT_STATIC, full)
+    assert packet[protocol.PAYLOAD_BASE + 4] == protocol.MAX_COLORS
+    end = protocol.PAYLOAD_BASE + 5 + 3 * protocol.MAX_COLORS
+    assert list(packet[protocol.PAYLOAD_BASE + 5:end]) == list(range(1, 16))
+    assert packet[end] == 0, "nothing may trail the last colour"
+
+    # The cap is the vendor's own: its Windows app refuses to send a sixth.
+    try:
+        protocol.build_set_lighting_effect(
+            1, protocol.EFFECT_STATIC, [(1, 1, 1)] * (protocol.MAX_COLORS + 1))
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("six colours should have been refused")
+
+
+def test_a_profile_name_is_rejected_rather_than_repaired():
+    """Names reach the filesystem and a command line, so they are checked here.
+
+    In `core` and not in a front end: sanitising in the GUI would leave the CLI
+    able to pass anything, and this is the layer both go through.
+
+    **Rejected, not quietly fixed.** Turning `../../.bashrc` into `.bashrc`
+    writes a file the user did not name — a silent wrong answer, which is worse
+    than an error. Two of these came from review and neither is hypothetical:
+
+    - a name starting with `-` is read by argparse as an option, so
+      `open-ek75 profiles apply -game` fails with an unrecognised-argument
+      error that says nothing about profiles;
+    - a whitespace-only name passes any "non-empty" check and creates a file
+      called "   .json" that no one can refer to again.
+
+    Accented letters are allowed. The owner of this hardware writes Portuguese
+    and "Perfil Jogo" is a name someone will use; `str.isalnum()` accepts it.
+    """
+    from ek75.core import profiles
+
+    for good in ("Game", "perfil jogo", "Perfil Jogo", "work_2",
+                 "a-b", "Ação", "1", "game-"):
+        assert profiles.clean_name(good) == good, good
+
+    # Surrounding whitespace is the one repair, and it is deliberate: it gives
+    # the file the user meant, where raising would be an error about characters
+    # they cannot see. Padded forms must reach the SAME profile, not a second
+    # one that merely looks identical in a list.
+    assert profiles.clean_name("  Game  ") == "Game"
+    assert profiles.clean_name("Game\t") == "Game"
+
+    for bad, why in ((".."           , "the parent directory"),
+                     ("."            , "the current directory"),
+                     ("../../.bashrc", "a traversal"),
+                     ("a/b"          , "a path separator"),
+                     (""             , "empty"),
+                     ("   "          , "whitespace only"),
+                     ("-game"        , "argparse reads it as an option"),
+                     (" -game"       , "the same after stripping"),
+                     ("a\x00b"       , "a NUL"),
+                     ("a\nb"         , "a newline"),
+                     ("x" * 200      , "longer than a filename may be")):
+        try:
+            profiles.clean_name(bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"{bad!r} should have been rejected: {why}")
+
+
+def test_a_profile_is_a_backup_and_an_old_backup_is_a_profile():
+    """One format, so a file written by `backup` can be dropped in as a profile.
+
+    A profile is what the vendor's own GetProfileConfig says it is — for a
+    keyboard, the key map and the lighting — which is exactly what `backup`
+    already records. Two formats would mean two things to keep in step for no
+    gain, and would make the file someone already has useless here.
+    """
+    import tempfile
+    from ek75.core import profiles, state
+
+    regions = {1: {"effect": 2, "flag": 0, "speed": 2,
+                   "colors": [[255, 0, 0], [0, 0, 255]], "brightness": 150}}
+    keys = {(50, 1): {"function_id": 6, "data": [0, 47, 0, 0, 0]}}
+
+    with tempfile.TemporaryDirectory() as tmp:
+        assert profiles.list_profiles(tmp) == []
+
+        profiles.save("Perfil Jogo", regions, keys, directory=tmp)
+        assert profiles.list_profiles(tmp) == ["Perfil Jogo"]
+
+        path = profiles.path_for("Perfil Jogo", directory=tmp)
+        assert state.load(path) == regions          # read by the backup reader
+        assert state.load_keys(path) == keys
+
+        profiles.save("B", regions, None, directory=tmp)
+        assert profiles.list_profiles(tmp) == ["B", "Perfil Jogo"]   # sorted
+
+        profiles.delete("B", directory=tmp)
+        assert profiles.list_profiles(tmp) == ["Perfil Jogo"]
+
+        # The claim in the other direction, which nothing asserted: a file
+        # written by `backup` is a profile. Dropped straight into the directory
+        # by the plain `state.save`, it must list and load like any other.
+        state.save(os.path.join(tmp, "From A Backup.json"), regions, keys=keys)
+        assert "From A Backup" in profiles.list_profiles(tmp)
+        loaded = profiles.path_for("From A Backup", directory=tmp)
+        assert state.load(loaded) == regions
+        assert state.load_keys(loaded) == keys
+        profiles.delete("From A Backup", directory=tmp)
+
+        # Deleting what is not there is an error, not a quiet success: a caller
+        # that mistyped a name must not be told it worked.
+        try:
+            profiles.delete("B", directory=tmp)
+        except FileNotFoundError:
+            pass
+        else:
+            raise AssertionError("deleting a missing profile reported success")
+
+
+def test_set_multipacket_chunk_layout():
+    """Port of tgdevice.js `SetMultiPacketCmd`'s per-packet body — the write-side
+    sibling of `build_multipacket_chunk`.
+
+    Expected bytes composed by hand from the vendor source, not by running the
+    builder: Total and Offset sit right after `args`, `width` bytes each,
+    big-endian, and the chunk's data bytes follow immediately after those —
+    embedded in the REQUEST, unlike the GET side where a reply carries them.
+
+    HDR_SIZE = len(chunk) + len(args) + 2*width, matching
+    `E[HDR_SIZE] = r+i+2*a` in the vendor source exactly.
+    """
+    got = protocol.build_set_multipacket_chunk(
+        profile_id=0, cmd_class=protocol.CLASS_MACRO,
+        command=protocol.MCO_CMD_MEMORY, total=27, offset=0,
+        chunk=bytes.fromhex("04e00a80"), args=bytes([1]), width=2)
+    expected = _padded(bytes.fromhex(
+        "00" "09" "06" "05" "00" "00"     # status size(4+1+4=9) class(6) cmd(5) profile
+        "01"                               # args: macro id
+        "001b" "0000"                      # Total=27 (0x1B), Offset=0 (width=2, BE)
+        "04e00a80"))                       # the chunk itself
+    assert got == expected
+
+    # A later chunk: offset moves, total stays the same.
+    got2 = protocol.build_set_multipacket_chunk(
+        profile_id=0, cmd_class=protocol.CLASS_MACRO,
+        command=protocol.MCO_CMD_MEMORY, total=27, offset=4,
+        chunk=bytes.fromhex("05e00b095e"), args=bytes([1]), width=2)
+    assert got2[protocol.HDR_SIZE] == 5 + 1 + 4        # chunk + args + 2*width
+    assert got2[protocol.PAYLOAD_BASE + 1:protocol.PAYLOAD_BASE + 3] == \
+        bytes.fromhex("001b")                          # Total unchanged (27 = 0x1B)
+    assert got2[protocol.PAYLOAD_BASE + 3:protocol.PAYLOAD_BASE + 5] == \
+        bytes.fromhex("0004")                          # Offset = 4
+
+    # width=1: the vendor writes Total and Offset as single raw bytes, not
+    # masked or shifted — confirmed straight from the source's `1==a` branch.
+    got3 = protocol.build_set_multipacket_chunk(
+        profile_id=0, cmd_class=protocol.CLASS_MACRO,
+        command=protocol.MCO_CMD_NAME, total=5, offset=0,
+        chunk=b"Hello", args=bytes([1]), width=1)
+    assert got3[protocol.PAYLOAD_BASE + 1] == 5          # Total
+    assert got3[protocol.PAYLOAD_BASE + 2] == 0          # Offset
+    assert got3[protocol.PAYLOAD_BASE + 3:protocol.PAYLOAD_BASE + 8] == b"Hello"
+
+
+def test_set_multipacket_sends_nothing_for_empty_data():
+    """Matches the vendor's own loop shape exactly: `for(n=0,I=S;I>0;)` never
+    runs its body when `S` (the total) is 0, so the function returns success
+    having sent zero packets — not one empty chunk, not a probe. Verified by
+    monkeypatching `command_process` and asserting it is never called.
+    """
+    from ek75.core import device
+
+    calls = []
+    real = device.command_process
+    try:
+        device.command_process = lambda *a, **k: calls.append(1) or a[1]
+        assert device.set_multipacket(None, 0, 6, 5, b"", args=bytes([1]),
+                                      width=2) is True
+        assert calls == []
+    finally:
+        device.command_process = real
+
+
+def test_set_multipacket_stops_at_the_first_unacknowledged_chunk():
+    """A write that spans more than one chunk must stop, not continue past a
+    NAK — continuing would leave the caller believing later bytes landed when
+    the packet carrying them was never confirmed.
+    """
+    from ek75.core import device, protocol
+
+    sent = []
+    def fails_on_second(fd, packet, **kw):
+        sent.append(packet)
+        return None if len(sent) == 2 else packet
+
+    real = device.command_process
+    try:
+        device.command_process = fails_on_second
+        data = bytes(range(protocol.MULTIPACKET_BLOCK)) * 3   # 3 chunks
+        ok = device.set_multipacket(None, 0, 6, 5, data, args=bytes([1]),
+                                    width=2)
+        assert ok is False
+        assert len(sent) == 2, "should have stopped after the failing chunk"
+    finally:
+        device.command_process = real
+
+
+def test_write_macro_data_settles_only_when_something_was_sent():
+    """Same rule the lighting/key-map bursts already follow: settle after
+    sending, not after doing nothing. A macro write spanning more than one
+    48-byte chunk is exactly the kind of burst a read straight afterward can
+    trail behind.
+    """
+    from ek75.core import lighting
+
+    settled = []
+
+    class Recorder:
+        MULTIPACKET_BLOCK = 48
+
+        @staticmethod
+        def set_multipacket(fd, profile_id, cmd_class, command, data,
+                            args=b"", width=1, **kw):
+            return True
+
+        @staticmethod
+        def settle():
+            settled.append(1)
+
+    real = lighting.device
+    session = lighting.Session.__new__(lighting.Session)
+    session.fd = None
+    try:
+        lighting.device = Recorder
+        assert session.write_macro_data(1, b"") is True
+        assert settled == [], "settled after sending nothing"
+
+        session.write_macro_data(1, bytes.fromhex("04e00a80"))
+        assert settled == [1]
+    finally:
+        lighting.device = real
+
+
+def test_find_dongle_reports_absent_rather_than_guessing():
+    """Portable across every machine, unlike a hardcoded `/dev/hidraw3`
+    expectation would be: on a system with no hidraw devices at all — any CI
+    runner, any machine without this hardware — `find_dongle()` must return
+    None cleanly rather than raise, and must not even attempt a file read.
+
+    `find_device()`, the keyboard's own equivalent, has never had an automated
+    test either — both are thin sysfs scans whose real confidence comes from
+    successful use against actual hardware, not from mocking `/sys` down to
+    the byte. This is the one assertion that IS safe to make everywhere: the
+    empty case, and that it costs nothing (no read attempted) to reach it.
+
+    The real machine this was developed against was checked by hand, not by
+    this test: `find_dongle()` returns `/dev/hidraw3`, the one interface (of
+    the dongle's five) that both vendor sources describe as carrying
+    `CLASS_DEVICE` commands — recorded in PROTOCOL.md as data, not asserted
+    here, because a minor number is not portable to another machine.
+    """
+    import glob as glob_module
+    from ek75.core import device
+
+    real_glob = glob_module.glob
+    opened = []
+    real_open = open
+
+    def tracking_open(path, *a, **k):
+        opened.append(path)
+        return real_open(path, *a, **k)
+
+    try:
+        glob_module.glob = lambda pattern: []
+        import builtins
+        builtins.open = tracking_open
+        assert device.find_dongle() is None
+        assert opened == [], "should not have tried to read anything"
+    finally:
+        glob_module.glob = real_glob
+        builtins.open = real_open
+
+
+def test_keysym_table_covers_every_usage_this_keyboards_keys_need():
+    """Completeness — but against THIS board's real keys, not `keymap.py`'s
+    generic tables. `HID_KEYS`/`HID_MODIFIER_USAGES` are full USB-HID usage
+    tables (every ordinary keyboard-page key, every one of the 8 modifier
+    positions) — `keymap.py` uses them to decode whatever id a profile hands
+    it, so they include usages this 75%-ANSI board has no physical key for at
+    all (usage 50, the ISO-only "Non-US # and ~" key; modifier usage 0xE7,
+    Right Win, which this board's key list confirms it lacks).
+
+    The actual "this board's real keys" source is `ek75/data/0101.json`
+    itself, read the same way `key_input.py`'s own docstring claims to be
+    scoped: each key's `default-function-Id`/`-data` AND
+    `default-fn-function-Id`/`-data` — BOTH layers, not just the base one.
+    An earlier version of this test only walked the base layer and passed
+    while the table was missing 13 usages the Fn layer actually needs (Fn+I/
+    O/P/K/L and Fn+F1..F8); `test_hid_keys_covers_every_usage_this_keyboard
+    _emits` above already walks both pairs for exactly this reason, and this
+    test now matches that shape.
+
+    function_id 6 is CombineKey (data = [modifier bitmask, keyboard-page
+    usage]); function_id 8 is MediaKeys (data = [usage hi, usage lo],
+    Consumer page).
+    """
+    from ek75.gui import key_input
+    from ek75.core import layout
+
+    reached = set(key_input.KEYSYM_TO_USAGE.values())
+    profile = layout.load()
+
+    for k in profile.keys:
+        for fid, fdata in ((k.function_id, k.function_data),
+                            (k.fn_function_id, k.fn_function_data)):
+            if fid == 6 and len(fdata) >= 2:               # CombineKey
+                modifier_bits, usage = fdata[0], fdata[1]
+                if usage:
+                    assert (key_input.PAGE_KEYBOARD, usage) in reached, \
+                        f"no keysym reaches usage {usage} needed by key " \
+                        f"{k.label!r} ({k.id})"
+                elif modifier_bits:
+                    # A modifier key: no keyboard-page usage of its own
+                    # here, the bitmask says which. `HID_MODIFIER_USAGES`'s
+                    # bit->usage order (`keymap.HID_MODIFIERS`) is (Ctrl,
+                    # Shift, Alt, Win) x (L, R), one bit each, matching this
+                    # profile's own encoding.
+                    for bit, modifier_usage in zip(
+                            (1, 2, 4, 8, 16, 32, 64, 128),
+                            range(0xE0, 0xE8)):
+                        if modifier_bits & bit:
+                            assert (key_input.PAGE_KEYBOARD, modifier_usage) \
+                                in reached, \
+                                f"no keysym reaches modifier usage " \
+                                f"0x{modifier_usage:02X} needed by key " \
+                                f"{k.label!r} ({k.id})"
+            elif fid == 8 and len(fdata) >= 2:              # MediaKeys
+                usage = (fdata[0] << 8) | fdata[1]
+                assert (key_input.PAGE_CONSUMER, usage) in reached, \
+                    f"no keysym reaches consumer usage 0x{usage:03X} " \
+                    f"needed by key {k.label!r} ({k.id})"
+
+
+def test_keysym_table_invents_no_usage_keymap_does_not_already_know():
+    """The other direction: every (page, usage) this table produces must
+    resolve to something real through the EXISTING tables — this authored
+    table is checked against `keymap.py`'s tables, not the other way around,
+    so a transposed digit here would show up as "resolves to nothing" rather
+    than silently mapping a keypress to a made-up usage.
+    """
+    from ek75.gui import key_input
+    from ek75.core import keymap
+
+    for keysym, (page, usage) in key_input.KEYSYM_TO_USAGE.items():
+        if page == key_input.PAGE_KEYBOARD:
+            known = (usage in keymap.HID_KEYS
+                    or usage in keymap.HID_MODIFIER_USAGES)
+        elif page == key_input.PAGE_CONSUMER:
+            known = usage in keymap.CONSUMER_KEYS
+        else:
+            known = False
+        assert known, f"{keysym!r} -> (page {page}, usage 0x{usage:02X}) " \
+                      f"is not a usage keymap.py recognises"
+
+
+def test_keysym_table_excludes_keys_this_board_does_not_have():
+    """This is a 75%-layout board with no Insert, Num Lock or Menu key on
+    EITHER layer (confirmed against the profile directly — see
+    `test_keysym_table_covers_every_usage_this_keyboards_keys_need`'s
+    docstring for how Home/End/Pause/Scroll_Lock/Print Screen were found to
+    be real Fn-shortcuts here and are no longer in this excluded list).
+    `Fn` never gets an entry — not "not yet", structurally never, since it
+    has no HID usage at all.
+    """
+    from ek75.gui import key_input
+
+    for absent in ("Insert", "Num_Lock", "Menu", "Fn"):
+        assert key_input.usage_for_keysym(absent) is None, absent
+
+
+def test_usage_for_keysym_matches_this_sessions_own_captured_keypresses():
+    """Spot-checked against real events this investigation actually captured
+    on a live Tk window on this machine (not against this table's own
+    design) — see `docs/investigations/key-test.md` §2.
+    """
+    from ek75.gui import key_input as ki
+
+    assert ki.usage_for_keysym("a") == (ki.PAGE_KEYBOARD, 4)
+    assert ki.usage_for_keysym("F5") == (ki.PAGE_KEYBOARD, 62)
+    assert ki.usage_for_keysym("Up") == (ki.PAGE_KEYBOARD, 82)
+    assert ki.usage_for_keysym("Caps_Lock") == (ki.PAGE_KEYBOARD, 57)
+    assert ki.usage_for_keysym("Super_L") == (ki.PAGE_KEYBOARD, 0xE3)
+    assert ki.usage_for_keysym("nonexistent_keysym_name") is None
+
+
+def test_get_wireless_connect_status_layout():
+    """Port of tgdevice.js `GetWirelessConnectState` — CLASS_DEVICE (0),
+    DEV_CMD_WIRELESS_CONNECT_STATUS (32).
+
+    Expected bytes composed by hand from the vendor source, not by running
+    the builder:
+
+      00 status(hardcoded 0, NOT TargetId) | 07 size | 00 class | a0 cmd
+      (32|GET_CMD=0xA0) | 00 profile
+
+    `HDR_STATUS=0` is a deliberate divergence from every other builder in this
+    project (every other one writes `TARGET_ID`) — confirmed straight from the
+    vendor source, which hardcodes 0 here rather than using `this.TargetId`.
+    The one point the two vendor sources disagree on is `HDR_SIZE`: the web
+    driver sends 7, the Windows app's `TgUsbHidDevice` sends 6, for a field
+    this request does not otherwise use (no payload either way). This ports
+    the web driver's 7.
+    """
+    expected = _padded(bytes.fromhex("00" "07" "00" "a0" "00"))
+    assert protocol.build_get_wireless_connect_status() == expected
+
+
+def test_parse_wireless_connect_status():
+    """`payload[0]` is the connected-slot count, then 3 bytes per slot: status,
+    then a 2-byte PID big-endian. `target_id` for slot `t` is COMPUTED as
+    `(t+1) << 4`, not read from the reply — matching
+    `A.ConnectInfo[t].TargetId=t+1<<4` in the vendor source exactly, not a
+    field this device sends back.
+    """
+    # Two slots: the first active (status 1) with PID 0x0101, the second
+    # inactive (status 0) with PID 0x0042.
+    resp = _padded(bytes.fromhex(
+        "02" "0000000000"          # header padding up to PAYLOAD_BASE
+        "02"                        # count = 2
+        "01" "0101"                 # slot 0: status=1, pid=0x0101
+        "00" "0042"))               # slot 1: status=0, pid=0x0042
+    got = protocol.parse_wireless_connect_status(resp)
+    assert got == {
+        "count": 2,
+        "slots": [
+            {"target_id": 0x10, "status": 1, "pid": 0x0101},
+            {"target_id": 0x20, "status": 0, "pid": 0x0042},
+        ],
+    }
+
+    # Zero slots: nothing to iterate, no IndexError from an empty range.
+    empty = _padded(bytes.fromhex("02" "0000000000" "00"))
+    assert protocol.parse_wireless_connect_status(empty) == \
+        {"count": 0, "slots": []}
+
+
+def test_get_wireless_connect_status_confirmed_on_hardware():
+    """CONFIRMED ON HARDWARE, real bytes, not hand-derived — the first ones
+    this project ever sent to the 2.4G dongle (VID 260D PID 0042), once
+    `packaging/60-ek75.rules` was extended to cover it (see PROTOCOL.md's
+    `CLASS_DEVICE` section and `docs/investigations/wireless-dongle.md`).
+
+    Captured with the keyboard switched to its 2.4G mode and paired to this
+    exact dongle: the request `build_get_wireless_connect_status()` produces
+    is byte-identical to what the hardware accepted, and the reply decodes
+    to exactly one connected slot carrying the keyboard's own USB PID
+    (0x0101) — which is exactly what should be true of a dongle currently
+    paired to this keyboard over 2.4G, not an assumption.
+    """
+    request = bytes.fromhex(
+        "000700a000000000000000000000000000000000000000000000000000000000"
+        "0000000000000000000000000000000000000000000000000000000000000000")
+    assert len(request) == protocol.REPORT_SIZE
+    assert protocol.build_get_wireless_connect_status() == request
+
+    reply = bytes.fromhex(
+        "020400a000000101010100000000000000000000000000000000000000000000"
+        "0000000000000000000000000000000000000000000000000000000000000000")
+    assert len(reply) == protocol.REPORT_SIZE
+    assert protocol.parse_wireless_connect_status(reply) == {
+        "count": 1,
+        "slots": [{"target_id": 0x10, "status": 1, "pid": 0x0101}],
+    }
+
+
+def test_the_led_matrix_matches_the_public_key_list():
+    """The matrix comes out of a proprietary binary; this checks it with public data.
+
+    `KEY_MATRIX` is `TK51G0101::_matrixIds`, transcribed from the Windows app's
+    FieldRva data — the same provenance as the colour tables beside it. A
+    transcription can be silently wrong, so it is checked against
+    `ek75/data/0101.json`, which this project already ships and which was not
+    involved in producing it.
+
+    Four things have to hold, and each would catch a different mistake:
+
+    - **every id in the matrix is a real key** — catches a misread offset or a
+      wrong element width, which would produce plausible-looking garbage;
+    - **no id appears twice** — catches a duplicated row;
+    - **the only keys left out are the knob's three** (170-172), which have no
+      LED under them. Any other absence means a row was dropped;
+    - **the shape is 6 x 15**, which the keyboard itself reports for region 1
+      through LED_CMD_ATTRIBUTE, arrived at independently of the DLL.
+
+    This is what `LED_CMD_FRAME` indexes. Getting it wrong means painting the
+    wrong key, which is exactly the kind of error that looks like a feature bug
+    rather than a bad table.
+    """
+    import json
+    from ek75.core import vendor_tables
+
+    with open(os.path.join(os.path.dirname(__file__), "..", "ek75", "data",
+                            "0101.json")) as handle:
+        profile = json.load(handle)
+    known = {key["KeyID"] for key in profile["Keys"]}
+
+    assert len(vendor_tables.KEY_MATRIX) == (vendor_tables.KEY_MATRIX_ROWS
+                                              * vendor_tables.KEY_MATRIX_COLS)
+    assert (vendor_tables.KEY_MATRIX_ROWS, vendor_tables.KEY_MATRIX_COLS) == (6, 15)
+
+    lit = [key_id for key_id in vendor_tables.KEY_MATRIX if key_id]
+    assert set(lit) <= known, f"not real keys: {sorted(set(lit) - known)}"
+    assert len(lit) == len(set(lit)), "a key id appears at two LED positions"
+
+    knob = {170, 171, 172}
+    assert known - set(lit) == knob, (
+        f"unexpected keys missing from the matrix: "
+        f"{sorted(known - set(lit) - knob)}")
+
+    # And the two accessors agree with the table in both directions.
+    assert vendor_tables.key_at_led(0) == vendor_tables.KEY_MATRIX[0]
+    assert vendor_tables.led_for_key(vendor_tables.KEY_MATRIX[0]) == 0
+    assert vendor_tables.led_for_key(170) is None       # the knob has no LED
+    assert vendor_tables.key_at_led(len(vendor_tables.KEY_MATRIX)) is None
+
+
+def test_led_frame_packet_layout():
+    """Port of `TgUsbHidDevice::SetLedFrame`, the streaming overload.
+
+    Expected bytes composed by hand from the decompiled IL, not from running
+    the builder. The Windows buffer is offset by one against this one because
+    it carries the HID report id at index 0; the indices here are corrected.
+
+      00 status | 36 size | 03 class | 04 cmd (LED_CMD_FRAME|SET) | 00 profile
+      00 pad    | 01 region | 81 flags | 00 frame | 00 first | 0f last
+      then R,G,B per LED
+
+    `HDR_SIZE` is **6 + 3n while the payload is 5 + 3n bytes** — one more than
+    `build_set_lighting_effect` uses for its own five payload bytes. The
+    vendor's two commands disagree and this transcribes what SetLedFrame does.
+    Correcting it would be inventing a byte the firmware may be counting.
+
+    Flags: 0x00 on every packet but the last, 0x80 on the last. The IL looked
+    like it started that byte at 1 and OR'd in 0x80, i.e. 0x01/0x81; the
+    keyboard refuses both. Asked with 0x00, 0x01, 0x02, 0x40, 0x80, 0x81, 0xC0
+    and 0xFF it acknowledged only 0x00 and 0x80. The hardware corrected the
+    decompilation here, which is the whole reason a write is probed before it
+    is trusted.
+    """
+    colors = [(255, 0, 0)] * 16
+    got = protocol.build_set_led_frame(1, colors, frame=0, first_led=0,
+                                        last_frame=True)
+    expected = _padded(bytes.fromhex(
+        "00" "36" "03" "04" "00" "00"
+        "01" "80" "00" "00" "0f" + "ff0000" * 16))
+    assert got == expected
+
+    # Not the last frame: bit 7 clears, nothing else moves.
+    other = protocol.build_set_led_frame(1, colors, frame=0, first_led=0,
+                                         last_frame=False)
+    assert other[protocol.PAYLOAD_BASE + 1] == 0x00
+    assert other[:protocol.PAYLOAD_BASE + 1] == got[:protocol.PAYLOAD_BASE + 1]
+
+    # A short final chunk: the last-LED index and HDR_SIZE both follow it.
+    tail = protocol.build_set_led_frame(1, [(1, 2, 3)] * 10, frame=2,
+                                         first_led=80, last_frame=True)
+    assert tail[protocol.HDR_SIZE] == 6 + 3 * 10
+    assert tail[protocol.PAYLOAD_BASE + 2] == 2          # frame number
+    assert tail[protocol.PAYLOAD_BASE + 3] == 80         # first
+    assert tail[protocol.PAYLOAD_BASE + 4] == 89         # first + 10 - 1
+    assert list(tail[protocol.PAYLOAD_BASE + 5:
+                     protocol.PAYLOAD_BASE + 5 + 30]) == [1, 2, 3] * 10
+
+
+def test_led_frame_refuses_what_it_cannot_put_on_the_wire():
+    """Sixteen LEDs per packet, from `TgUsbHidDevice`'s BLOCK_SIZE = 16.
+
+    A seventeenth would overflow the report — 5 + 3*17 = 56 payload bytes
+    against 58 available, so it would *fit* and still be wrong, because the
+    firmware is told 16 per packet by every packet the vendor sends. That is
+    the dangerous kind of limit: the one nothing downstream would catch.
+    """
+    ok = [(0, 0, 0)] * protocol.LED_FRAME_BLOCK
+
+    def rejects(**kw):
+        try:
+            protocol.build_set_led_frame(**dict(
+                dict(region_id=1, colors=ok, frame=0, first_led=0), **kw))
+        except ValueError:
+            return True
+        return False
+
+    assert rejects(colors=[(0, 0, 0)] * (protocol.LED_FRAME_BLOCK + 1))
+    assert rejects(colors=[])
+    assert rejects(colors=[(0, 256, 0)])
+    assert rejects(colors=[(0, -1, 0)])
+    assert rejects(region_id=300)
+    assert rejects(frame=-1)
+    assert rejects(first_led=300)
+    assert len(protocol.build_set_led_frame(1, ok, frame=0, first_led=0)) \
+        == protocol.REPORT_SIZE
+
+
+def test_save_custom_led_layout():
+    """Port of `TgUsbHidDevice::SaveCustomLed` — LED_CMD_CUSTOM (8).
+
+      00 status | 02 size | 03 class | 08 cmd | 01 profile
+
+    Note this is the LOW-LEVEL SaveCustomLed. `TgDevice::SaveCustomLed` shares
+    the name, sends nothing at all, and writes a file on the PC — reading that
+    one instead gives "saving is a PC-side operation", which is half true and
+    useless.
+    """
+    expected = _padded(bytes.fromhex("00" "02" "03" "08" "01"))
+    assert protocol.build_save_custom_led(profile_id=1) == expected
+
+
+def test_macro_modifier_usages_are_a_different_table_from_combinekeys_bitmask():
+    """0xE0-0xE7 name the same eight modifiers HID_MODIFIERS does, from the
+    other side: a macro's own usage byte instead of CombineKey's data[0] bit.
+    Reusing HID_MODIFIERS directly (bit values 1,2,4...) would look up usage
+    0xE0 = 224 in a table whose keys top out at 128, and find nothing — which
+    is exactly the mistake this table exists to make impossible.
+    """
+    from ek75.core import keymap
+
+    assert keymap.HID_MODIFIER_USAGES[0xE0] == ("Left Ctrl", "Ctrl esquerdo")
+    assert keymap.HID_MODIFIER_USAGES[0xE7] == ("Right Win", "Win direito")
+    assert len(keymap.HID_MODIFIER_USAGES) == 8
+    # HID_MODIFIERS is keyed by bit value (1, 2, 4...); 224 (0xE0) is not one.
+    assert 224 not in dict(keymap.HID_MODIFIERS)
+
+    # describe_macro_usage covers both axes: modifiers and ordinary keys.
+    assert keymap.describe_macro_usage(0xE0) == ("Left Ctrl", "Ctrl esquerdo")
+    assert keymap.describe_macro_usage(4) == ("A", "A")          # HID_KEYS
+    assert keymap.describe_macro_usage(0x00) is None
+
+
+def test_decode_this_keyboards_real_macro():
+    """The strongest oracle available: this keyboard's own stored macro.
+
+    Decoded by hand from `OEMDriver.Pages.PageMacroTg::ParseKeyboardData` in the
+    Windows app, walked instruction by instruction — not from running this
+    decoder on itself. Every one of the 27 bytes this keyboard actually holds
+    (macro id 1, read via CLASS_MACRO in an earlier slice) is consumed, with
+    nothing left over: three taps of Left Ctrl, a couple of seconds apart, the
+    shape of an anti-idle macro.
+
+    `0x04`/`0x05`/`0x0A`/`0x0B` are the only opcodes this asserts against real
+    device data — the other two opcodes this format defines (0x0C, 0x0D) are
+    tested separately, from hand-built bytes, because neither has ever been
+    seen in a real macro. See PROTOCOL.md's `CLASS_MACRO` section.
+    """
+    from ek75.core import protocol
+    data = bytes.fromhex(
+        "04e00a8005e00b095e04e00a6d05e00b079d04e00a5f05e00b0471")
+    steps = protocol.parse_macro_steps(data)
+
+    assert steps == [
+        {"op": "keydown", "usage": 0xE0},
+        {"op": "delay", "ms": 128},
+        {"op": "keyup", "usage": 0xE0},
+        {"op": "delay", "ms": 2398},
+        {"op": "keydown", "usage": 0xE0},
+        {"op": "delay", "ms": 109},
+        {"op": "keyup", "usage": 0xE0},
+        {"op": "delay", "ms": 1949},
+        {"op": "keydown", "usage": 0xE0},
+        {"op": "delay", "ms": 95},
+        {"op": "keyup", "usage": 0xE0},
+        {"op": "delay", "ms": 1137},
+    ]
+
+
+def test_build_macro_steps_round_trips_this_keyboards_real_macro():
+    """The encoder, decoded and re-encoded, must reproduce this keyboard's own
+    27 bytes exactly. This is the strongest oracle available for an encoder
+    with nothing on the wire yet: the real bytes were transcribed once from
+    the device, independent of both directions of this test, so a match is
+    not circular. It exercises 0x04/0x05/0x0A/0x0B — every opcode this project
+    has ever seen in a real macro.
+    """
+    from ek75.core import protocol
+    real = bytes.fromhex(
+        "04e00a8005e00b095e04e00a6d05e00b079d04e00a5f05e00b0471")
+
+    steps = protocol.parse_macro_steps(real)
+    assert protocol.build_macro_steps(steps) == real
+
+    # And the other direction, WEAKER: encoding a hand-written step list and
+    # decoding it back must reproduce the same list. This only checks that
+    # this project's own encoder and decoder agree with EACH OTHER for 0x0C
+    # and the random-delay opcode 0x0D — neither has ever appeared in a real
+    # macro, so this is internal consistency, not vendor confirmation.
+    hand_written = [
+        {"op": "keydown", "usage": 0x04},           # A
+        {"op": "delay", "ms": 50},
+        {"op": "keyup", "usage": 0x04},
+        {"op": "delay", "ms": 70000},                # forces the 3-byte opcode
+        {"op": "random_delay", "min_ms": 100, "max_ms": 200},
+    ]
+    encoded = protocol.build_macro_steps(hand_written)
+    assert protocol.parse_macro_steps(encoded) == hand_written
+
+
+def test_build_macro_steps_picks_the_smallest_delay_opcode():
+    """The vendor's own encoder picks 1-, 2- or 3-byte delay opcodes by size —
+    read from `ParseKeyboardData`'s own bounds, 255 / 65535 / 16777215. Picking
+    the smallest opcode that fits is what that logic does; always using the
+    3-byte form would still decode correctly but would not match what a real
+    macro looks like, and a byte-match test on a fixed constant is how that
+    would be caught.
+    """
+    from ek75.core import protocol
+
+    assert protocol.build_macro_steps([{"op": "delay", "ms": 255}]) == \
+        bytes.fromhex("0aff")
+    assert protocol.build_macro_steps([{"op": "delay", "ms": 256}]) == \
+        bytes.fromhex("0b0100")
+    assert protocol.build_macro_steps([{"op": "delay", "ms": 65535}]) == \
+        bytes.fromhex("0bffff")
+    assert protocol.build_macro_steps([{"op": "delay", "ms": 65536}]) == \
+        bytes.fromhex("0c010000")
+
+
+def test_build_macro_steps_refuses_what_it_cannot_encode():
+    """This builder can send bytes to a keyboard; unlike the decoder, it does
+    not get to shrug at bad input — golden rule 2 applies here as much as to
+    any other builder in this file.
+    """
+    from ek75.core import protocol
+
+    def rejects(steps):
+        try:
+            protocol.build_macro_steps(steps)
+        except ValueError:
+            return True
+        return False
+
+    assert rejects([{"op": "delay", "ms": -1}])
+    assert rejects([{"op": "delay", "ms": 16777216}])           # past 3 bytes
+    assert rejects([{"op": "keydown", "usage": 256}])
+    assert rejects([{"op": "keydown", "usage": -1}])
+    assert rejects([{"op": "random_delay", "min_ms": 0, "max_ms": 65536}])
+    # An inverted range: the decoder (reading device data) accepts one without
+    # complaint — nobody has observed what the firmware does with one — but
+    # this builder can put bytes on a keyboard and nobody has a legitimate
+    # reason to construct a backwards range on purpose.
+    assert rejects([{"op": "random_delay", "min_ms": 200, "max_ms": 100}])
+    assert rejects([{"op": "bogus"}])
+
+    # A malformed dict — the right op, a missing field — is the same class of
+    # bad input as an out-of-range value and must raise the same ValueError,
+    # not a bare KeyError from indexing straight into the dict.
+    for missing_field in ({"op": "delay"}, {"op": "keydown"},
+                          {"op": "random_delay", "min_ms": 1}):
+        try:
+            protocol.build_macro_steps([missing_field])
+        except ValueError:
+            continue
+        raise AssertionError(f"{missing_field} should have raised ValueError")
+
+
+def test_macro_opcodes_never_seen_in_real_data():
+    """`0x0C` and `0x0D` exist in the vendor's encoder and in no macro this
+    project has ever read. Hand-built rather than device-derived — the
+    docstring on the previous test is the reason this one exists separately.
+    """
+    from ek75.core import protocol
+
+    # 0x0C: a 3-byte, big-endian delay up to 16777215 ms.
+    assert protocol.parse_macro_steps(bytes.fromhex("0c010203")) == [
+        {"op": "delay", "ms": 0x010203}]
+
+    # 0x0D: a random delay, two 2-byte big-endian bounds.
+    assert protocol.parse_macro_steps(bytes.fromhex("0d00640bb8")) == [
+        {"op": "random_delay", "min_ms": 0x0064, "max_ms": 0x0bb8}]
+
+    # The vendor's own encoder does not validate min <= max (read from its IL);
+    # this decoder does not invent a check the format itself does not have.
+    assert protocol.parse_macro_steps(bytes.fromhex("0d0bb80064")) == [
+        {"op": "random_delay", "min_ms": 0x0bb8, "max_ms": 0x0064}]
+
+
+def test_format_macro_steps_is_the_one_shared_entry_point():
+    """`cli.py` and `gui/pages/macros.py` both call this, not `parse_macro_steps`
+    directly — one place decides what a step reads like, and one place decides
+    what an unparseable byte reads like, so the two front ends cannot drift.
+
+    Each entry is an (english, portuguese) pair, same shape every other
+    bilingual label in this project uses (see `keymap.describe`).
+    """
+    from ek75.core import keymap
+
+    lines = keymap.format_macro_steps(bytes.fromhex("04e00a80"))
+    assert lines == [
+        ("Key down: Left Ctrl", "Tecla pressionada: Ctrl esquerdo"),
+        ("Wait 128 ms", "Espera 128 ms"),
+    ]
+
+    # A usage neither table names: shown as the raw byte, not silently blank.
+    lines = keymap.format_macro_steps(bytes.fromhex("0400"))
+    assert "0x00" in lines[0][0]
+
+    # Truncated and unknown bytes read as prose, in both languages, never as a
+    # raised exception reaching the caller.
+    assert keymap.format_macro_steps(bytes.fromhex("04"))[0][0] \
+        .startswith("(cut off")
+    assert keymap.format_macro_steps(bytes.fromhex("04"))[0][1] \
+        .startswith("(cortado")
+    assert "Unknown" in keymap.format_macro_steps(bytes.fromhex("ff"))[0][0]
+    assert "desconhecido" in keymap.format_macro_steps(bytes.fromhex("ff"))[0][1]
+
+
+def test_macro_decoder_never_raises_on_bad_input():
+    """This decodes bytes read from a device, not from this project's own
+    encoder — which does not exist yet. Garbage in must not become an
+    exception; it must become something the caller can show and move past.
+    """
+    from ek75.core import protocol
+
+    assert protocol.parse_macro_steps(b"") == []
+
+    # A keydown missing its usage byte: exactly one marker, nothing else — a
+    # loose `truncated[-1]["op"] == "truncated"` would also pass if a phantom
+    # step were emitted before the marker, which is precisely the bug this
+    # decoder must not have.
+    assert protocol.parse_macro_steps(bytes.fromhex("04")) == \
+        [{"op": "truncated"}]
+
+    # A delay whose 2-byte payload is cut to 1.
+    assert protocol.parse_macro_steps(bytes.fromhex("0b09")) == \
+        [{"op": "truncated"}]
+
+    # An opcode this table does not define.
+    unknown = protocol.parse_macro_steps(bytes.fromhex("ff"))
+    assert unknown == [{"op": "unknown", "opcode": 0xFF}]
+
+    # Known steps before an unknown byte are kept, not discarded wholesale.
+    mixed = protocol.parse_macro_steps(bytes.fromhex("04e0ff"))
+    assert mixed[0] == {"op": "keydown", "usage": 0xE0}
+    assert mixed[1] == {"op": "unknown", "opcode": 0xFF}
+
+
+# --- CLASS_MACRO (6), read-only ---------------------------------------------
+
+def test_get_macro_id_list_probe():
+    """Port of `GetMacroIdList` — GetMultiPacketCmd(0, CLASS_MACRO, 1|GET, null).
+
+    Expected bytes read off the vendor source, not off the builder:
+      00 status | 01 size | 06 class | 81 cmd (1 | GET) | 00 profile
+    """
+    expected = _padded(bytes.fromhex("0001068100"))
+    assert protocol.build_get_macro_id_list_probe() == expected
+
+
+def test_three_id_lists_over_one_transport_are_decoded_three_ways():
+    """The clearest reason in this project not to port by analogy.
+
+    `LED_CMD_ID_LIST`, `PFL_CMD_ID_LIST` and `MCO_CMD_ID_LIST` all ride
+    GetMultiPacketCmd, all return a byte array of ids, and all post-process it
+    differently in the vendor's own driver:
+
+        LED      collapses ids 0 and 1 into whichever appears first
+        PROFILE  filters nothing at all
+        MACRO    drops every zero  (`DataArray.filter(x => x !== 0)`)
+
+    Asserted on one shared input so the difference is a fact rather than three
+    separate descriptions that can drift apart.
+    """
+    shared = bytes([0, 1, 0, 4, 0, 7])
+    assert protocol.parse_led_region_id_list(shared) == [0, 4, 7]
+    assert protocol.parse_profile_id_list(shared) == [0, 1, 0, 4, 0, 7]
+    assert protocol.parse_macro_id_list(shared) == [1, 4, 7]
+
+    assert protocol.parse_macro_id_list(b"") == []
+    assert protocol.parse_macro_id_list(bytes([0, 0, 0])) == []
+
+
+def test_get_macro_data_probe_carries_the_macro_id_as_an_argument():
+    """`GetMacroData` is the first command here to use GetMultiPacketCmd's
+    `args` — `GetMultiPacketCmd(0, CLASS_MACRO, 5|GET, [macroId], out, 2)`.
+
+    The id goes at PAYLOAD_BASE, before the Total/Offset fields that the chunk
+    requests then write after it:
+      00 status | 01 size | 06 class | 85 cmd (5 | GET) | 00 profile | 00 pad
+      03 macroId
+    """
+    expected = _padded(bytes.fromhex("00010685" + "0000" + "03"))
+    assert protocol.build_get_macro_data_probe(3) == expected
+
+
+def test_macro_data_chunks_place_total_and_offset_after_the_macro_id():
+    """width=2 AND one argument byte, a combination nothing has exercised live.
+
+    The hardware does answer — this unit stores one macro and returned its 27
+    bytes, so the combination is not untested live. But 27 bytes is a *single*
+    chunk: the offset arithmetic below, the second chunk request and the
+    two-byte length decoding are still reached by nothing but these packets.
+    So they are spelled out rather than trusted to the parameters lining up.
+
+    Total and Offset are two bytes each, big-endian, starting right after the
+    one argument byte — PAYLOAD_BASE+1 — and HDR_SIZE covers
+    chunk + args + 2*width = 48 + 1 + 4 = 53 (0x35):
+
+      00 | 35 | 06 | 85 | 00 | 00 | 03 | 00 64 | 00 00
+                                      id  total   offset
+    """
+    got = protocol.build_multipacket_chunk(
+        profile_id=0, cmd_class=protocol.CLASS_MACRO,
+        command=protocol.MCO_CMD_MEMORY, total=0x0064, offset=0,
+        chunk_len=48, args=bytes([3]), width=2)
+    assert got == _padded(bytes.fromhex("0035068500" + "00" + "03"
+                                         + "0064" + "0000"))
+
+    # A non-zero offset moves only the second pair.
+    got = protocol.build_multipacket_chunk(
+        profile_id=0, cmd_class=protocol.CLASS_MACRO,
+        command=protocol.MCO_CMD_MEMORY, total=0x0064, offset=0x0030,
+        chunk_len=0x34, args=bytes([3]), width=2)
+    assert got == _padded(bytes.fromhex("0039068500" + "00" + "03"
+                                         + "0064" + "0030"))
+
+    # Where the reply's payload starts, and where the total is read from.
+    assert protocol.multipacket_chunk_offset(nargs=1, width=2) == \
+        protocol.PAYLOAD_BASE + 1 + 4
+    reply = _padded(bytes.fromhex("02" + "0000000000" + "03" + "0164"))
+    assert protocol.parse_multipacket_total(reply, nargs=1, width=2) == 0x0164
+
+
+# --- CLASS_PROFILE (5), read-only -------------------------------------------
+
+def test_get_profile_id_list_probe():
+    """Port of tgdevice.js `GetProfileIdList`, which is a GetMultiPacketCmd probe.
+
+    The vendor calls `GetMultiPacketCmd(0, CLASS_PROFILE, PFL_CMD_ID_LIST|GET,
+    null, out)` — ProfileId 0, exactly like `GetLedRegionIdList`, and no
+    arguments. GetMultiPacketCmd's probe writes HDR_SIZE=1.
+
+    Expected bytes read off the vendor source, not off the builder:
+      00 status | 01 size | 05 class | 80 cmd (0 | GET) | 00 profile
+    """
+    expected = _padded(bytes.fromhex("0001058000"))
+    assert protocol.build_get_profile_id_list_probe() == expected
+
+
+def test_profile_id_list_is_not_filtered_like_the_led_region_list():
+    """The two id lists look alike and are decoded differently. On purpose.
+
+    `GetLedRegionIdList` post-processes its byte array, collapsing ids 0 and 1
+    into whichever appears first. `GetProfileIdList` does
+    `ProfileList = new Uint8Array(DataArray)` and filters nothing at all.
+
+    Writing the profile parser by analogy with its sibling — the obvious move,
+    since both are multi-packet id lists — would silently swallow a profile.
+    This asserts the difference on one shared input rather than describing it.
+    """
+    both = bytes([0, 1, 4])
+    assert protocol.parse_led_region_id_list(both) == [0, 4]     # filtered
+    assert protocol.parse_profile_id_list(both) == [0, 1, 4]     # not filtered
+
+    assert protocol.parse_profile_id_list(bytes([1])) == [1]
+    assert protocol.parse_profile_id_list(b"") == []
+
+
+def test_get_active_profile_writes_neither_a_size_nor_a_profile():
+    """`GetActiveProfileId` sets HDR_SIZE=0 and never touches HDR_PROFILE.
+
+    Both zeros are load-bearing and neither is an accident of the vendor's code:
+    asking *which* profile is active cannot take a profile id as input, and the
+    request carries no payload for HDR_SIZE to describe.
+
+    HDR_SIZE=0 is NOT shared with `build_get_battery_status`, the other
+    profile-less read in this file — that one sets HDR_SIZE=3. The two are
+    alike in the profile byte only, which is the kind of half-resemblance that
+    gets a 3 written here by analogy.
+
+    Expected bytes read off the vendor source:
+      00 status | 00 size | 05 class | 83 cmd (3 | GET) | 00 profile
+    """
+    expected = _padded(bytes.fromhex("0000058300"))
+    got = protocol.build_get_active_profile()
+    assert got == expected
+    assert got[protocol.HDR_SIZE] == 0
+    assert got[protocol.HDR_PROFILE] == 0
+    assert protocol.build_get_battery_status()[protocol.HDR_SIZE] == 3
+
+
+def test_active_profile_comes_back_in_the_header_not_the_payload():
+    """`A.ProfileId = A.Data[DATA_INDEX.HDR_PROFILE]` — byte 4, not PAYLOAD_BASE.
+
+    Every other parser in this file reads from PAYLOAD_BASE, so this is the one
+    place where copying a sibling's shape gives the wrong byte. The test pins
+    the distinction by putting a different value in each position: a parser that
+    read the payload would return 7.
+
+    The packet is synthetic on purpose, and that is worth stating plainly. The
+    real reply from this keyboard was `02 00 05 83 01 00 01 00...` — the id in
+    byte 4 and byte 6 both — so the hardware available here cannot distinguish
+    the two readings and does not confirm the header. Only the vendor driver
+    does. This test locks in the vendor's choice; it does not prove it.
+    """
+    resp = _padded(bytes([0x02, 0x00, 0x05, 0x83, 0x01, 0x00, 0x07]))
+    assert protocol.parse_active_profile_response(resp) == 1
+
+
+def test_read_profiles_reports_nothing_rather_than_a_plausible_default():
+    """A timeout must surface as None, per field, not as "profile 1, obviously".
+
+    The two reads are separate commands and either can fail alone, so the
+    result carries two independent Nones. Defaulting to 1 would make the very
+    assumption this read exists to test — and this project has already been
+    caught believing the vendor's idea of the hardware over the hardware.
+
+    An *empty* id list is not a failure: `get_multipacket` returns b"" when the
+    device answers "zero bytes follow", so `ids` is [] and not None. The two
+    outcomes mean different things and the test pins both.
+    """
+    from ek75.core import lighting
+
+    class Silent:
+        """Every read times out, which `device` reports as None."""
+        @staticmethod
+        def get_multipacket(*a, **k):
+            return None
+
+        @staticmethod
+        def command_process(*a, **k):
+            return None
+
+    class AnswersEmpty(Silent):
+        @staticmethod
+        def get_multipacket(*a, **k):
+            return b""
+
+    real = lighting.device
+    try:
+        lighting.device = Silent
+        session = lighting.Session.__new__(lighting.Session)
+        session.fd = None
+        assert session.read_profiles() == {"ids": None, "active": None}
+
+        lighting.device = AnswersEmpty
+        assert session.read_profiles() == {"ids": [], "active": None}
+    finally:
+        lighting.device = real
+
+
+def test_speed_range_matches_what_the_firmware_produces():
+    """1-3, and this is the strong tier of evidence, not the XAML one.
+
+    `Fn`+`Left`/`Right` are bound to LightingSpeed (48) on this keyboard — which
+    the device profile does not show; it was found by reading the live key map.
+    Pressing them under `open-ek75 watch 1` made the firmware walk its own stored
+    value 3 -> 2 -> 1 -> 2 -> 3 -> 2, never reaching 0 and never exceeding 3.
+
+    A stored 0 does exist — it was the value before the first keypress — so the
+    constants bound what the UI offers, not what the field can physically hold.
+    """
+    assert protocol.SPEED_MIN == 1
+    assert protocol.SPEED_MAX == 3
+    assert protocol.SPEED_MIN <= protocol.SPEED_NORMAL <= protocol.SPEED_MAX
+
+    # A stored 0 must survive being read back rather than being clamped on the
+    # way in: the device reports it, and rewriting it here would hide the state.
+    resp = _padded(bytes.fromhex("02" + "0803020100" + "01" + "05000000"))
+    assert protocol.parse_lighting_effect_response(resp)["speed"] == 0

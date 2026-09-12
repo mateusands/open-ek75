@@ -7,7 +7,7 @@ import argparse
 import sys
 import time
 
-from .core import device, lighting, protocol, state
+from .core import device, keymap, layout, lighting, profiles, protocol, state
 
 # Regions known on the hardware this was reverse-engineered against (a Husky
 # HTG-series unit, PID 0101). See PROTOCOL.md before assuming these are
@@ -100,16 +100,37 @@ def cmd_off(args):
 
 
 def cmd_backup(args):
+    """Record what the keyboard currently holds, so a write has a way back."""
+    keys = None
     with lighting.Session.open() as session:
-        regions = session.snapshot(range(args.scan))
-    state.save(args.path, regions)
-    for region, info in regions.items():
+        regions = None if args.keys_only else session.snapshot(range(args.scan))
+        if not args.lighting_only:
+            # Key ids come from the profile's layout, never from a range: they
+            # are non-contiguous and run past 83 (the knob sits at 170-172).
+            profile = layout.load()
+            keys = session.read_key_map([k.id for k in profile.keys])
+
+    state.save(args.path, regions, keys=keys)
+    for region, info in (regions or {}).items():
         print(_describe(region, info) + " -- saved")
+    if keys is not None:
+        answered = sum(1 for v in keys.values() if v is not None)
+        print(f"key map: {answered}/{len(keys)} assignments -- saved")
     print(f"\nsaved to {args.path}")
 
 
-def cmd_restore(args):
-    regions = state.load(args.path)
+def _apply_saved(path, keys_only=False, lighting_only=False, source="backup"):
+    """Put a saved file back on the keyboard, and report both halves.
+
+    Shared by `restore` and `profiles apply` because they are the same act on
+    the same format — a profile IS a backup (see core/profiles.py). Two copies
+    of this would mean two places to fix the day a partial restore is reported
+    wrongly, which is the report that matters most.
+
+    Returns the process exit code.
+    """
+    regions = {} if keys_only else state.load(path)
+    keys = None if lighting_only else state.load_keys(path)
     failed = 0
     with lighting.Session.open() as session:
         for region, ok in session.restore(regions):
@@ -124,7 +145,81 @@ def cmd_restore(args):
                 failed += 1
                 print(f"region {region}: FAILED restoring to {detail}",
                       file=sys.stderr)
+
+        if keys is None and not lighting_only:
+            print(f"no key map in this {source}; nothing to restore for keys "
+                  f"(back it up with 'backup' first)", file=sys.stderr)
+            if keys_only:
+                # The user asked for the key map and nothing else, and nothing
+                # happened. Exiting 0 here would tell a script it worked.
+                failed += 1
+        elif keys:
+            results = session.restore_key_map(keys)
+            bad = [k for k, ok in results if not ok]
+            print(f"key map: {len(results) - len(bad)}/{len(results)} restored")
+            for key_id, layer in bad:
+                failed += 1
+                print(f"key {key_id} layer {layer}: FAILED", file=sys.stderr)
+
     return 1 if failed else 0
+
+
+def cmd_restore(args):
+    return _apply_saved(args.path, keys_only=args.keys_only,
+                        lighting_only=args.lighting_only)
+
+
+def cmd_profiles(args):
+    """Named configurations kept on this machine — the vendor keeps them here
+    too; see core/profiles.py."""
+    if args.action != "list" and not args.name:
+        print(f"'profiles {args.action}' needs a name", file=sys.stderr)
+        return 2
+
+    if args.action == "list":
+        names = profiles.list_profiles()
+        if not names:
+            print("no profiles saved yet  (open-ek75 profiles save <name>)")
+        for name in names:
+            print(name)
+        return 0
+
+    try:
+        name = profiles.clean_name(args.name)
+    except ValueError as error:
+        print(f"{error}", file=sys.stderr)
+        return 2
+
+    if args.action == "save":
+        keys = None
+        with lighting.Session.open() as session:
+            regions = session.snapshot(range(args.scan))
+            profile = layout.load()
+            keys = session.read_key_map([k.id for k in profile.keys])
+        path = profiles.save(name, regions, keys)
+        answered = sum(1 for v in keys.values() if v is not None)
+        print(f"saved {name}: {len(regions)} lighting region(s), "
+              f"{answered} key assignment(s)")
+        print(f"  {path}")
+        return 0
+
+    if args.action == "delete":
+        try:
+            profiles.delete(name)
+        except FileNotFoundError:
+            print(f"no profile called {name!r}", file=sys.stderr)
+            return 1
+        print(f"deleted {name}")
+        return 0
+
+    try:
+        path = profiles.path_for(name)
+        open(path).close()
+    except OSError:
+        print(f"no profile called {name!r}", file=sys.stderr)
+        return 1
+    print(f"applying {name}…")
+    return _apply_saved(path, source="profile")
 
 
 def cmd_probe(args):
@@ -136,6 +231,47 @@ def cmd_probe(args):
     path = device.find_device()
     print(f"device: {path}")
     with lighting.Session.open() as session:
+        battery = session.read_battery()
+        if battery is not None:
+            pct = f"{battery['percent']}%" if battery["percent"] is not None else "?"
+            print(f"battery: {pct}  (level {battery['level']}/{battery['max_level']}, "
+                  f"status {battery['status']}, critical {battery['critical']})")
+        sleep = session.read_sleep()
+        if sleep is not None:
+            print("sleep:   " + (f"{sleep['minutes']} min ({sleep['seconds']} s)"
+                                  if sleep["enabled"] else "disabled"))
+
+        profiles = session.read_profiles()
+        listed = ("no reply" if profiles["ids"] is None
+                  else profiles["ids"] or "none reported")
+        active = "no reply" if profiles["active"] is None else profiles["active"]
+        print(f"profiles: {listed}   active: {active}")
+        if profiles["ids"] is not None and len(profiles["ids"]) == 1:
+            # The official Windows app offers Profile 1/2/3. Where a keyboard
+            # lists one, the other slots do not exist yet — they are created by
+            # PFL_CMD_CREATE, a persistent write this project does not send.
+            # Exactly one, not "fewer than two": an empty list is a different
+            # and stranger answer, and this line would contradict the "none
+            # reported" printed directly above it.
+            print("          (only one profile exists; the extra slots the "
+                  "vendor app shows must be created first)")
+
+        macros = session.read_macros()
+        if macros["ids"] is None:
+            print("macros:   no reply — this keyboard does not answer CLASS_MACRO")
+        elif not macros["ids"]:
+            print("macros:   none stored")
+        else:
+            print(f"macros:   {macros['ids']}")
+            for macro_id in macros["ids"]:
+                data = session.read_macro_data(macro_id)
+                if data is None:
+                    print(f"          {macro_id}: no reply")
+                else:
+                    print(f"          {macro_id}: {len(data)} bytes")
+                    for en, _pt in keymap.format_macro_steps(data):
+                        print(f"            {en}")
+
         ids, source = session.region_ids()
         print(f"regions: {ids}   (source: {source})")
         for region in ids:
@@ -164,8 +300,15 @@ def cmd_watch(args):
     of `speed`/`brightness` without writing a single unvalidated byte — see
     PROTOCOL.md.
     """
+    # `flush=True` on every line here, and it is not decoration. This command
+    # exists to show changes as they happen, and Python block-buffers stdout
+    # whenever it is not a terminal — a pipe, a `tee`, an editor's output pane.
+    # The buffer then holds everything until it fills or the process exits
+    # cleanly, and a monitor is normally stopped with Ctrl-C or killed. The
+    # result is a tool whose entire output can vanish, which reads as "the
+    # keyboard did nothing" — the one conclusion it must never fake.
     print(f"watching region {args.region} — press the keyboard's own Fn "
-          f"lighting shortcuts. Ctrl-C to stop.\n")
+          f"lighting shortcuts. Ctrl-C to stop.\n", flush=True)
     previous = None
     with lighting.Session.open() as session:
         try:
@@ -183,11 +326,12 @@ def cmd_watch(args):
                         fields = ("effect", "flag", "speed", "brightness", "colors")
                         changed = "   <- changed: " + ", ".join(
                             f for f, a, b in zip(fields, previous, current) if a != b)
-                    print(f"[{stamp}] {_describe(args.region, info)}{changed}")
+                    print(f"[{stamp}] {_describe(args.region, info)}{changed}",
+                          flush=True)
                     previous = current
                 time.sleep(args.interval)
         except KeyboardInterrupt:
-            print("\nstopped.")
+            print("\nstopped.", flush=True)
 
 
 def cmd_gui(args):
@@ -205,6 +349,75 @@ def cmd_gui(args):
             "On Arch/CachyOS:  sudo pacman -S tk"
         )
     return run()
+
+
+def cmd_keys(args):
+    """Print what each key is actually assigned to, read from the keyboard.
+
+    Read-only. This is the command that answers "is my keyboard still at factory
+    defaults?", which the vendor's device profile cannot: on the unit this was
+    built against, 23 of 166 assignments differ from it — see PROTOCOL.md.
+    """
+    profile = layout.load()
+    layers = ({"base": (protocol.LAYER_BASE,), "fn": (protocol.LAYER_FN,)}
+              .get(args.layer, (protocol.LAYER_BASE, protocol.LAYER_FN)))
+    with lighting.Session.open() as session:
+        live = session.read_key_map([k.id for k in profile.keys], layers=layers)
+
+    unread = differing = shown = 0
+    for key in profile.keys:
+        for layer in layers:
+            got = live[(key.id, layer)]
+            if got is None:
+                unread += 1
+                print(f"  {key.label:<11} {_LAYER_NAMES[layer]:<5} (no reply)")
+                continue
+            expected_id = (key.function_id if layer == protocol.LAYER_BASE
+                           else key.fn_function_id)
+            expected_data = list(key.function_data if layer == protocol.LAYER_BASE
+                                 else key.fn_function_data)
+            same = (got["function_id"], got["data"]) == (expected_id, expected_data)
+            if same:
+                if args.diff:
+                    continue
+            else:
+                differing += 1
+            label = keymap.describe(got["function_id"], got["data"])
+            text = label[0 if i18n_lang() == "en" else 1] if label else \
+                f"fid={got['function_id']} {got['data']}"
+            mark = "" if same else "  <- differs from the vendor profile"
+            print(f"  {key.label:<11} {_LAYER_NAMES[layer]:<5} {text}{mark}")
+            shown += 1
+
+    print(f"\n{shown} shown, {differing} differ from {profile.pid}.json"
+          + (f", {unread} unread" if unread else ""))
+    if differing:
+        print("The keyboard is the authority; the profile is the vendor's idea of "
+              "this PID. See PROTOCOL.md.")
+
+
+_LAYER_NAMES = {protocol.LAYER_BASE: "base", protocol.LAYER_FN: "fn"}
+
+
+def i18n_lang():
+    """The CLI is English-only; the GUI has the language switch. This exists so
+    keymap's (english, portuguese) pairs are indexed in one obvious place."""
+    return "en"
+
+
+def _only_flags(parser):
+    """`--keys-only` / `--lighting-only`, mutually exclusive.
+
+    Backup and restore both cover two independent things now. Someone restoring
+    a lighting mistake should not be made to rewrite 166 key assignments to do
+    it, and someone recovering a key map should not have their current colours
+    replaced by whatever was on screen when the file was written.
+    """
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--keys-only", action="store_true",
+                       help="the key map only, leaving lighting alone")
+    group.add_argument("--lighting-only", action="store_true",
+                       help="the lighting only, leaving the key map alone")
 
 
 def build_parser():
@@ -249,17 +462,38 @@ def build_parser():
     p_off.add_argument("region", type=int)
     p_off.set_defaults(func=cmd_off)
 
-    p_backup = sub.add_parser("backup", help="save the current state of every region")
+    p_backup = sub.add_parser(
+        "backup", help="save the lighting state and the key map")
     p_backup.add_argument("path", nargs="?", default=state.DEFAULT_PATH)
     p_backup.add_argument("--scan", type=int, default=8)
+    _only_flags(p_backup)
     p_backup.set_defaults(func=cmd_backup)
 
     p_restore = sub.add_parser("restore", help="apply a state saved by 'backup'")
     p_restore.add_argument("path", nargs="?", default=state.DEFAULT_PATH)
+    _only_flags(p_restore)
     p_restore.set_defaults(func=cmd_restore)
+
+    p_profiles = sub.add_parser(
+        "profiles", help="named configurations kept on this machine")
+    p_profiles.add_argument("action",
+                            choices=("list", "save", "apply", "delete"))
+    # `nargs="?"` so `profiles list` needs no name. A name that argparse would
+    # read as an option is rejected by core.profiles.clean_name with a message
+    # about profiles, rather than by argparse with one about arguments.
+    p_profiles.add_argument("name", nargs="?")
+    p_profiles.add_argument("--scan", type=int, default=8)
+    p_profiles.set_defaults(func=cmd_profiles)
 
     p_gui = sub.add_parser("gui", help="open the graphical interface (tkinter)")
     p_gui.set_defaults(func=cmd_gui)
+
+    p_keys = sub.add_parser(
+        "keys", help="read-only: what each key is assigned to, from the keyboard")
+    p_keys.add_argument("--layer", choices=("base", "fn", "both"), default="both")
+    p_keys.add_argument("--diff", action="store_true",
+                         help="show only keys that differ from the vendor profile")
+    p_keys.set_defaults(func=cmd_keys)
 
     p_probe = sub.add_parser(
         "probe", help="read-only: regions, per-region attributes and effect lists")

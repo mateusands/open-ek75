@@ -118,11 +118,47 @@ de 6x15 LEDs) e a região `4` é a barra de luz lateral (uma fita de 16).
 `open-ek75 probe` pergunta ao seu próprio teclado quais zonas ele tem e quais
 efeitos cada uma suporta.
 
-**Não implementado**: mapas de cor por tecla, remapeamento de teclas, macros,
-múltiplos perfis e tudo que estiver fora da iluminação RGB (o protocolo
-compartilhado deste chip também cobre bateria e energia, já que este modelo tem
-uma). A interface mostra esses itens nomeados como não implementados, em vez de
-escondê-los — cada um diz de qual classe de comando precisaria.
+**Ler está mais adiantado do que escrever**, e a separação é proposital: uma
+leitura errada devolve uma resposta errada, enquanto uma escrita errada pode
+deixar um teclado físico num estado do qual não se sai.
+
+*Implementado, somente leitura*: nível de bateria e temporizador de suspensão,
+o mapa de teclas (`keys` — o que cada tecla faz nas duas camadas, lido do
+teclado e não do perfil do fabricante, que discorda deste hardware em 23
+atribuições), quais perfis existem e qual está ativo, e as macros guardadas
+(`probe`).
+
+Esta última merece uma frase: o perfil de dispositivo da Dareu não contém a
+palavra "macro", e o teclado em que isto foi construído tem uma guardada mesmo
+assim. Os bytes aparecem crus porque o formato não foi decodificado — o código
+que os monta não está em nenhum arquivo do fabricante que este projeto tem, e um
+palpite sobre as teclas seria um formato inventado.
+
+*Implementado, e escreve*: a iluminação, e **remapear uma tecla** pela página
+Teclas da interface — escolha a tecla, escolha a camada, e atribua outra tecla
+(com Ctrl/Shift/Alt/Win se quiser), uma tecla de mídia, ou o que outra tecla do
+seu teclado já faz. O `backup` grava o mapa de teclas junto com a iluminação e o
+`restore` devolve os dois; use `--keys-only` ou `--lighting-only` para mexer só
+em um deles.
+
+Nada é gravado antes de existir um backup do mapa, e duas teclas nunca podem ser
+remapeadas: as que carregam o `Fn` e o reset de fábrica. Juntas elas são o
+**`Fn`+`Esc`, um reset de fábrica embutido no firmware** — o caminho de volta que
+não depende deste software, e que remapear qualquer uma das duas destruiria.
+
+**Perfis** são arquivos nomeados nesta máquina — `open-ek75 profiles`, ou a
+página Perfis. Isso não é um contorno para o teclado ter um perfil só: é onde o
+app do próprio fabricante guarda o Profile 1/2/3 dele, o que foi resolvido
+decompilando as duas implementações da Dareu. O que não dá é trocar por uma
+tecla do teclado.
+
+**Não implementado**: mapas de cor por tecla, gravar ou editar macros, e criar um
+segundo perfil na memória do próprio aparelho. Este último merece ser dito sem rodeios: o
+aplicativo oficial do Windows mostra Perfil 1/2/3, e este teclado reporta
+exatamente um. Os outros dois não estão escondidos — eles não existem, e
+criá-los é uma escrita persistente cujo desfazer nunca foi testado. A interface
+mostra os itens não implementados nomeados como tais, em vez de escondê-los,
+cada um dizendo de qual classe de comando precisaria.
 Veja o [PROTOCOL.md](PROTOCOL.md) — em especial "What is not implemented yet" e
 "What to try next" — para o mapa completo do que é conhecido mas não portado,
 versus o que é genuinamente desconhecido.

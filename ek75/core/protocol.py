@@ -202,6 +202,47 @@ def direction_axis(effect):
 MAX_COLORS = 5
 
 
+# --- how many colours an effect actually uses --------------------------------
+# From `OEMDriver.Pages.PageLedTg::CheckCustomColorCount` in the vendor's Windows
+# app, which reduces to: effects 1, 4, 9, 20, 21, 22 and 132 take one colour;
+# Starlit (11) and Breathing (2) take more; everything else takes one. The Ws, Qf
+# and Jm pages carry the identical method, so it is a framework-wide rule.
+#
+# It agrees with what this keyboard was seen doing, three times over: Static one
+# colour, Wave one colour (the table's default branch), Breathing cycling red,
+# green and blue in order, one per breath. The table was found after those
+# observations rather than used to predict them.
+#
+# Each number is the largest one something can vouch for, and they do not come
+# from the same place:
+#
+#   Breathing  3  watched on this keyboard cycling red, green, blue in order.
+#                 The vendor's UI caps it at 2; the firmware plainly does more,
+#                 so the 2 is the application's limit. 4 and 5 are NOT offered:
+#                 the wire allows them and nobody has seen them, and offering a
+#                 slot that may do nothing is the thing this project does not do.
+#   Starlit    2  the vendor's number, and nothing else. Nobody has looked at
+#                 this effect on hardware. It got MAX_COLORS in an earlier draft
+#                 purely by sharing a branch with Breathing in the vendor's
+#                 table, which is not evidence about Starlit at all.
+#   everything 1  the table's default branch, and what Static and Wave were
+#                 seen doing.
+COLORS_PER_EFFECT = {
+    EFFECT_BREATHING: 3,
+    EFFECT_STARLIT: 2,
+}
+
+
+def max_colors_for(effect):
+    """How many colours this effect will actually show. See PROTOCOL.md.
+
+    Never more than something can vouch for: an unclassified effect gets 1,
+    which is the answer that cannot mislead.
+    """
+    return min(COLORS_PER_EFFECT.get(effect, 1), MAX_COLORS)
+
+
+
 # --- speed --------------------------------------------------------------------
 # Not 0-255. The official software's speed slider is declared Minimum="1"
 # Maximum="3" in its own XAML (PageLedRegionTg's compiled BAML), matching the
@@ -259,10 +300,18 @@ def build_set_lighting_effect(region_id, effect, colors, flag=0, speed=0,
                                profile_id=DEFAULT_PROFILE_ID):
     """LED_CMD_EFFECT|SET_CMD — apply an effect (and colour list) to a region.
 
-    `colors` is a list of (r, g, b) tuples, at most MAX_COLORS of them. Static
-    and Breathing take exactly one; multi-colour effects (untested here) may
-    take more — the wire format supports it (byte PAYLOAD_BASE+4 is the colour
-    count).
+    `colors` is a list of (r, g, b) tuples, at most MAX_COLORS of them, and the
+    count goes in byte PAYLOAD_BASE+4.
+
+    **How many of them get drawn depends on the effect** — `max_colors_for()`
+    is the rule, and PROTOCOL.md's "The colour list is used by some effects,
+    over time" is the evidence. `Breathing` cycles the whole list, one colour
+    per breath; `Static` and `Wave` draw `colors[0]` and ignore the rest.
+
+    This builder does not apply that rule. It puts on the wire exactly what it
+    is handed, capped at MAX_COLORS, because the packet is the vendor's format
+    and a sibling PID may spend the list differently. Deciding how many to
+    offer belongs to the caller.
 
     `flag` is the animation direction (DIRECTION_FORWARD/DIRECTION_REVERSE) for
     the effects that have one — see EFFECT_DIRECTION_AXIS. It is 0 for
@@ -348,6 +397,97 @@ def is_response_ready(resp):
     return (resp[HDR_STATUS] & 0x0F) == 2
 
 
+# --- LED_CMD_FRAME (4) — per-key colour, streamed from here ------------------
+# Recovered from the Windows app, not from the web driver: `tgdevice.js` names
+# LED_CMD_FRAME in its enum and never sends it. See PROTOCOL.md, "LED_CMD_FRAME".
+#
+# Sixteen LEDs per packet, which is `TgUsbHidDevice.BLOCK_SIZE` read out of its
+# constructor. A seventeenth would still fit in the report (5 + 3*17 = 56 bytes
+# against 58 available) and would still be wrong — the kind of limit nothing
+# downstream would catch, so it is enforced here.
+LED_FRAME_BLOCK = 16
+# The flags byte is 0x00 on every packet but the last, which is 0x80. Nothing
+# else is accepted: the firmware was asked for 0x00, 0x01, 0x02, 0x40, 0x80,
+# 0x81, 0xC0 and 0xFF, and answered only the first and the fifth.
+#
+# The IL appeared to start this byte at 1 and OR in 0x80 on the last packet,
+# which would make 0x01/0x81. The keyboard refused both. That initial `1` is
+# something else in the decompiled method — the return value, most likely —
+# and this is the one place in this file where the hardware corrected a reading
+# of the vendor's binary rather than confirming it.
+LED_FRAME_FLAG_LAST = 0x80
+
+
+def build_set_led_frame(region_id, colors, frame=0, first_led=0,
+                        last_frame=True):
+    """LED_CMD_FRAME|SET_CMD — one packet of a streamed frame.
+
+    `colors` is up to LED_FRAME_BLOCK (r, g, b) tuples, in LED order —
+    `vendor_tables.KEY_MATRIX` is what that order means on region 1.
+
+    HDR_SIZE is 6 + 3n where the payload is 5 + 3n bytes. That is what
+    `SetLedFrame` writes; `build_set_lighting_effect` uses 5 + 3n for its own
+    five payload bytes, so the vendor's two commands disagree by one.
+    Transcribed rather than reconciled — a "fix" here would be inventing a byte
+    the firmware may well be counting.
+
+    **Accepted by this keyboard and not yet doing what it says.** Frames are
+    acknowledged and the firmware visibly reacts to each one, but sixteen red
+    LEDs at index 0 light the whole keyboard blue — and sixteen blue ones light
+    it the same blue, which rules out a byte-order swap and a one-byte offset
+    alike. `first_led`/`last_led` are accepted at every value 0..89 without
+    changing anything. Something has to happen before a frame means what it
+    says; see PROTOCOL.md, "What the hardware said when it was sent".
+    """
+    colors = [tuple(c) for c in colors]
+    if not colors:
+        raise ValueError("a frame packet needs at least one colour")
+    if len(colors) > LED_FRAME_BLOCK:
+        raise ValueError(f"at most {LED_FRAME_BLOCK} LEDs per packet, "
+                         f"got {len(colors)}")
+    if not isinstance(frame, int) or frame < 0 or frame > 255:
+        raise ValueError(f"frame must be 0..255, got {frame!r}")
+
+    pkt = _new_packet()
+    pkt[HDR_STATUS] = TARGET_ID
+    pkt[HDR_SIZE] = 6 + 3 * len(colors)
+    pkt[HDR_CLASS] = CLASS_LIGHTING
+    pkt[HDR_COMMAND] = LED_CMD_FRAME | SET_CMD
+    pkt[PAYLOAD_BASE + 0] = _byte("region_id", region_id)
+    pkt[PAYLOAD_BASE + 1] = LED_FRAME_FLAG_LAST if last_frame else 0
+    pkt[PAYLOAD_BASE + 2] = frame
+    pkt[PAYLOAD_BASE + 3] = _byte("first_led", first_led)
+    pkt[PAYLOAD_BASE + 4] = _byte("last_led", first_led + len(colors) - 1)
+    for i, (r, g, b) in enumerate(colors):
+        base = PAYLOAD_BASE + 5 + 3 * i
+        pkt[base + 0] = _byte(f"colors[{i}].r", r)
+        pkt[base + 1] = _byte(f"colors[{i}].g", g)
+        pkt[base + 2] = _byte(f"colors[{i}].b", b)
+    return bytes(pkt)
+
+
+def build_save_custom_led(profile_id=DEFAULT_PROFILE_ID):
+    """LED_CMD_CUSTOM|SET_CMD — persist what was streamed.
+
+    Port of `TgUsbHidDevice::SaveCustomLed`. There is a second method of that
+    name, `TgDevice::SaveCustomLed`, which sends nothing and writes a file on
+    the PC; this is the one that reaches the keyboard.
+
+    NOT CONFIRMED ON HARDWARE, and note this keyboard does not list effects
+    13-17 (CustomFrame1..5) in either region — so there may be no slot here for
+    a saved pattern to live in, and streaming to effect 18 may be the only path
+    this model has.
+    """
+    pkt = _new_packet()
+    pkt[HDR_STATUS] = TARGET_ID
+    pkt[HDR_SIZE] = 2
+    pkt[HDR_CLASS] = CLASS_LIGHTING
+    pkt[HDR_COMMAND] = LED_CMD_CUSTOM | SET_CMD
+    pkt[HDR_PROFILE] = _byte("profile_id", profile_id)
+    return bytes(pkt)
+
+
+
 # --- multi-packet transfers (tgdevice.js: GetMultiPacketCmd) -----------------
 # Some replies do not fit in one 64-byte report (the RegionId list, the profile
 # list, macro data). The vendor driver handles them in two steps: a probe that
@@ -406,6 +546,42 @@ def multipacket_chunk_offset(nargs=0, width=1):
     return PAYLOAD_BASE + nargs + 2 * width
 
 
+def build_set_multipacket_chunk(profile_id, cmd_class, command, total, offset,
+                                chunk, args=b"", width=1):
+    """Port of tgdevice.js `SetMultiPacketCmd`'s per-packet body — the
+    write-side sibling of `build_multipacket_chunk`.
+
+    The GET side asks for a chunk and reads it out of the reply. This one
+    embeds the chunk's bytes directly in the REQUEST, right after Total and
+    Offset — there is no reply body to read data out of. Same
+    Total/Offset-at-`PAYLOAD_BASE+len(args)` scheme, `SET_CMD` instead of
+    `GET_CMD`, `HDR_SIZE = len(chunk) + len(args) + 2*width`, matching the
+    vendor's own `E[HDR_SIZE] = r+i+2*a` exactly.
+
+    CONFIRMED ON HARDWARE via `SetMacroData`: an identity write and a
+    same-length content change to this keyboard's real macro 1 both
+    acknowledged, and each read back exactly what was sent. See PROTOCOL.md's
+    `CLASS_MACRO` section for the full ladder.
+    """
+    pkt = _new_packet()
+    pkt[HDR_STATUS] = TARGET_ID
+    pkt[HDR_CLASS] = cmd_class
+    pkt[HDR_COMMAND] = command | SET_CMD
+    pkt[HDR_PROFILE] = profile_id
+    for i, byte in enumerate(args):
+        pkt[PAYLOAD_BASE + i] = byte
+    base = PAYLOAD_BASE + len(args)
+    for i in range(width):
+        shift = 8 * (width - 1 - i)
+        pkt[base + i] = (total >> shift) & 0xFF
+        pkt[base + width + i] = (offset >> shift) & 0xFF
+    data_at = base + 2 * width
+    for i, byte in enumerate(chunk):
+        pkt[data_at + i] = byte
+    pkt[HDR_SIZE] = len(chunk) + len(args) + 2 * width
+    return bytes(pkt)
+
+
 # --- LED_CMD_ID_LIST / LED_CMD_ATTRIBUTE (both read-only) -------------------
 
 def build_get_led_region_id_list_probe(profile_id=0):
@@ -439,8 +615,10 @@ def build_get_led_region_attribute(region_id):
     """LED_CMD_ATTRIBUTE|GET_CMD — a region's type, FPS, matrix and effect list.
 
     Port of tgdevice.js `GetLedRegionAttribute`. Note it leaves HDR_PROFILE at
-    0 (the driver does not set it for this command), unlike every other
-    lighting command here.
+    0, because the driver does not set it for this command. It is not the only
+    builder here that sends profile 0 — `build_get_led_region_id_list_probe`
+    does too, and so does `build_get_battery_status` — but each has its own
+    reason, and none of them inherits `DEFAULT_PROFILE_ID`.
     """
     pkt = _new_packet()
     pkt[HDR_STATUS] = TARGET_ID
@@ -489,3 +667,542 @@ def build_set_lighting_brightness(region_id, brightness,
     pkt[PAYLOAD_BASE + 0] = region_id
     pkt[PAYLOAD_BASE + 1] = brightness & 0xFF
     return bytes(pkt)
+
+
+# --- CLASS_POWER subcommands (tgdevice.js: CLASS_POWER_CMD_LIST) -------------
+PWR_CMD_BAT_STATUS = 0                 # implemented (read)
+PWR_CMD_TIME_2_DIM = 1                 # this keyboard does not answer it
+PWR_CMD_TIME_2_SLEEP = 2               # implemented (read)
+PWR_CMD_LOW_INDICATOR_CTRL = 3
+PWR_CMD_MAX_LED_BRIGHTNESS = 4
+PWR_CMD_ADC = 5
+PWR_CMD_USB_TIME_2_SLEEP = 6           # reads Control=0 while on the cable
+
+# The official software's sleep slider runs 3-30 and TK51G0101.dll declares
+# MinSleepTime=3.0 / MaxSleepTime=30.0. The wire carries SECONDS: this keyboard
+# returned 180, which is those 3 minutes. Minutes in a UI, seconds on the wire.
+SLEEP_MIN_MINUTES = 3
+SLEEP_MAX_MINUTES = 30
+
+
+def build_get_battery_status():
+    """PWR_CMD_BAT_STATUS|GET_CMD — port of tgdevice.js `GetBatteryStatus`.
+
+    Takes no profile: the vendor driver writes HDR_STATUS, HDR_SIZE, HDR_CLASS
+    and HDR_COMMAND and stops, leaving HDR_PROFILE at 0. Charge is a property of
+    the keyboard, not of a profile, so there is nothing to pass.
+
+    Confirmed on hardware: this keyboard answered Status=1, Level=100,
+    MaxLevel=100, Critical=0 while plugged in.
+    """
+    pkt = _new_packet()
+    pkt[HDR_STATUS] = TARGET_ID
+    pkt[HDR_SIZE] = 3
+    pkt[HDR_CLASS] = CLASS_POWER
+    pkt[HDR_COMMAND] = PWR_CMD_BAT_STATUS | GET_CMD
+    return bytes(pkt)
+
+
+def parse_battery_status_response(resp):
+    """Decode a PWR_CMD_BAT_STATUS reply.
+
+    `percent` is derived, not sent: the firmware reports Level out of MaxLevel,
+    and dividing by an assumed 100 would misreport any device that uses a
+    coarser scale. None when MaxLevel is 0 — unknown beats a wrong number.
+
+    `status` and `critical` are passed through as the raw bytes. Their value
+    sets are not documented anywhere this project has seen; naming them here
+    would be inventing a meaning rather than reporting one.
+    """
+    level = resp[PAYLOAD_BASE + 1]
+    max_level = resp[PAYLOAD_BASE + 2]
+    return {
+        "status": resp[PAYLOAD_BASE + 0],
+        "level": level,
+        "max_level": max_level,
+        "critical": resp[PAYLOAD_BASE + 3],
+        "percent": round(level * 100 / max_level) if max_level else None,
+    }
+
+
+def build_get_time_to_sleep(profile_id=DEFAULT_PROFILE_ID):
+    """PWR_CMD_TIME_2_SLEEP|GET_CMD — port of tgdevice.js `GetTimeToSleep`.
+
+    Carries the profile, unlike the battery read: the vendor driver sets
+    `D[HDR_PROFILE] = A.ProfileId`, so the idle timeout is stored per profile.
+
+    Confirmed on hardware: profile 1 answered Control=1, Second=180.
+    """
+    pkt = _new_packet()
+    pkt[HDR_STATUS] = TARGET_ID
+    pkt[HDR_SIZE] = 3
+    pkt[HDR_CLASS] = CLASS_POWER
+    pkt[HDR_COMMAND] = PWR_CMD_TIME_2_SLEEP | GET_CMD
+    pkt[HDR_PROFILE] = profile_id
+    return bytes(pkt)
+
+
+def parse_time_to_sleep_response(resp):
+    """Decode a PWR_CMD_TIME_2_SLEEP reply.
+
+    Verbatim from the vendor driver: when Control is 0 the timer is off and the
+    two seconds bytes are not read at all — reading them anyway would report a
+    timeout for a device that has none.
+    """
+    enabled = resp[PAYLOAD_BASE] != 0
+    seconds = (resp[PAYLOAD_BASE + 1] << 8 | resp[PAYLOAD_BASE + 2]) if enabled else 0
+    return {
+        "enabled": enabled,
+        "seconds": seconds,
+        "minutes": round(seconds / 60),
+    }
+
+
+# --- CLASS_KEY subcommands (tgdevice.js: CLASS_KEY_CMD_LIST) ----------------
+KEY_CMD_ID_LIST = 0
+KEY_CMD_ATTRIBUTE = 1
+KEY_CMD_DEBOUNCE = 2
+KEY_CMD_ASSIGN = 3                     # implemented (read)
+KEY_CMD_ANALOG_ACTUATION_POINT = 4
+KEY_CMD_FN_LOCK = 5
+KEY_WIN_LOCK_MAC_STATUS = 6
+KEY_PERFORMACE = 7
+KEY_CMD_BULK_ASSIGN = 8                # not used — see PROTOCOL.md
+KEY_CMD_SOCD_STATUS = 9
+
+LAYER_BASE = 0
+LAYER_FN = 1
+
+
+def build_get_key_assign(key_id, layer, profile_id=DEFAULT_PROFILE_ID):
+    """KEY_CMD_ASSIGN|GET_CMD — what one key does on one layer.
+
+    Port of tgdevice.js `GetKeyAssign`. `layer` is LAYER_BASE or LAYER_FN;
+    those numbers are the vendor driver's, and reading both back from this
+    keyboard matched the profile's `default-function-*` and
+    `default-fn-function-*` fields, which is what identifies which is which.
+
+    Confirmed on hardware: all 83 keys answered on both layers.
+    """
+    pkt = _new_packet()
+    pkt[HDR_STATUS] = TARGET_ID
+    pkt[HDR_SIZE] = 8
+    pkt[HDR_CLASS] = CLASS_KEY
+    pkt[HDR_COMMAND] = KEY_CMD_ASSIGN | GET_CMD
+    pkt[HDR_PROFILE] = profile_id
+    pkt[PAYLOAD_BASE + 0] = key_id
+    pkt[PAYLOAD_BASE + 1] = layer
+    return bytes(pkt)
+
+
+def _byte(name, value):
+    """Reject anything that would be truncated on its way into a packet byte."""
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ValueError(f"{name} must be an int, got {value!r}")
+    if not 0 <= value <= 255:
+        raise ValueError(f"{name} must be 0..255, got {value}")
+    return value
+
+
+def build_set_key_assign(key_id, layer, function_id, data,
+                         profile_id=DEFAULT_PROFILE_ID):
+    """KEY_CMD_ASSIGN|SET_CMD — port of tgdevice.js `SetKeyAssign`.
+
+    The header is byte-identical to `build_get_key_assign`, which is confirmed
+    on hardware for all 166 assignments; only the command byte and three extra
+    payload bytes differ. Payload offsets [0] and [1] — keyId and layer — are
+    therefore already proven to address the right key. [2] and [3..7] are not.
+
+    **This writes the keyboard's persistent key map.** Every argument is
+    bounds-checked rather than trusted: a five-byte `data` that arrives with
+    four would put a zero where the keyboard expects a modifier, and a `key_id`
+    outside 0..255 would be truncated into addressing a *different key* than
+    the caller named. Neither failure announces itself — `HIDIOCSFEATURE`
+    succeeds either way.
+
+    The way back is `Fn`+`Esc`, the factory reset this firmware binds itself
+    (function id 44, read from the live key map). It runs on the keyboard and
+    needs nothing from this code — which `restore` cannot claim, since restore
+    is this same command. See PROTOCOL.md's `SetKeyAssign` section.
+    """
+    if layer not in (LAYER_BASE, LAYER_FN):
+        raise ValueError(f"layer must be LAYER_BASE or LAYER_FN, got {layer!r}")
+    data = list(data)
+    if len(data) != 5:
+        raise ValueError(f"data must be exactly 5 bytes, got {len(data)}")
+
+    pkt = _new_packet()
+    pkt[HDR_STATUS] = TARGET_ID
+    pkt[HDR_SIZE] = 8
+    pkt[HDR_CLASS] = CLASS_KEY
+    pkt[HDR_COMMAND] = KEY_CMD_ASSIGN | SET_CMD
+    pkt[HDR_PROFILE] = _byte("profile_id", profile_id)
+    pkt[PAYLOAD_BASE + 0] = _byte("key_id", key_id)
+    pkt[PAYLOAD_BASE + 1] = layer
+    pkt[PAYLOAD_BASE + 2] = _byte("function_id", function_id)
+    for i, value in enumerate(data):
+        pkt[PAYLOAD_BASE + 3 + i] = _byte(f"data[{i}]", value)
+    return bytes(pkt)
+
+
+def parse_key_assign_response(resp):
+    """Decode a KEY_CMD_ASSIGN reply into the same shape the device profile uses.
+
+    `data` is five bytes whose meaning depends on `function_id` — see
+    core/keymap.py, which is the only place that interprets them.
+    """
+    return {
+        "function_id": resp[PAYLOAD_BASE + 2],
+        "data": list(resp[PAYLOAD_BASE + 3:PAYLOAD_BASE + 8]),
+    }
+
+
+
+# --- CLASS_PROFILE subcommands (tgdevice.js: CLASS_PROFILE_CMD_LIST) --------
+PFL_CMD_ID_LIST = 0                    # implemented (read)
+PFL_CMD_CREATE = 1                     # write, persistent, untested undo
+PFL_CMD_DELETE = 2                     # the undo for CREATE, itself untested
+PFL_CMD_ACTIVE = 3                     # implemented (read); the SET is not
+PFL_CMD_NAME = 4                       # no GetProfileName found in the source
+PFL_CMD_RESET = 5                      # write, destroys a profile's contents
+
+
+def build_get_profile_id_list_probe(profile_id=0):
+    """Port of tgdevice.js `GetProfileIdList` — a GetMultiPacketCmd probe.
+
+    The vendor passes ProfileId 0, the same as `GetLedRegionIdList`: asking the
+    keyboard which profiles exist is not a question about one of them.
+
+    Only the probe is built here. `device.get_multipacket` derives the chunk
+    requests from the same (profile_id, class, command) triple, which is why
+    this is named `_probe` and its LED sibling is too.
+
+    CONFIRMED ON HARDWARE: returns [1] on this keyboard — one profile, which is
+    also the active one. The vendor's Windows app offers Profile 1/2/3; the
+    other two have to be created with PFL_CMD_CREATE, which this project does
+    not send.
+    """
+    return build_multipacket_probe(profile_id, CLASS_PROFILE, PFL_CMD_ID_LIST)
+
+
+def parse_profile_id_list(data):
+    """The assembled byte array *is* the list — no filtering, deliberately.
+
+    `GetProfileIdList` ends with `ProfileList = new Uint8Array(DataArray)` and
+    nothing else. Its sibling `parse_led_region_id_list` collapses ids 0 and 1;
+    that is the LED list's own quirk and copying it here would silently swallow
+    a profile. The two are tested against one shared input so the difference is
+    asserted rather than trusted to this comment.
+
+    This function exists for the layer rule rather than for the work: callers in
+    `lighting.py` must not unpack raw bytes themselves.
+    """
+    return list(data)
+
+
+def build_get_active_profile():
+    """PFL_CMD_ACTIVE|GET_CMD — port of tgdevice.js `GetActiveProfileId`.
+
+    Writes HDR_STATUS, HDR_CLASS and HDR_COMMAND, leaving **both** HDR_SIZE and
+    HDR_PROFILE at 0. Neither zero is incidental: the request carries no payload
+    for HDR_SIZE to describe, and asking *which* profile is active cannot take a
+    profile id as its input.
+
+    The zero profile byte is shared with `build_get_battery_status`; the zero
+    size is not — that one sets HDR_SIZE=3. Half a resemblance.
+
+    Confirmed on hardware: this keyboard accepted the packet and replied ready
+    with `02 00 05 83 01 00 01 00...`, reporting profile 1 as active. That
+    confirms the *request*. It does not confirm where the answer lives — see
+    `parse_active_profile_response`, which this unit cannot discriminate.
+    """
+    pkt = _new_packet()
+    pkt[HDR_STATUS] = TARGET_ID
+    pkt[HDR_SIZE] = 0
+    pkt[HDR_CLASS] = CLASS_PROFILE
+    pkt[HDR_COMMAND] = PFL_CMD_ACTIVE | GET_CMD
+    return bytes(pkt)
+
+
+def parse_active_profile_response(resp):
+    """The active profile id, read from the reply's **header**.
+
+    `A.ProfileId = A.Data[DATA_INDEX.HDR_PROFILE]` — byte 4, where the request
+    would have carried a profile id had it sent one. Every other parser in this
+    module reads from PAYLOAD_BASE, so this is the one place where following a
+    sibling's shape yields the wrong byte.
+
+    Read on hardware, the reply was `02 00 05 83 01 00 01 00...`: this keyboard
+    puts the id in byte 4 **and** byte 6, so it cannot tell the two readings
+    apart. The vendor driver is the only reason to prefer the header, and that
+    is enough — but do not record this as "the header was confirmed". It was
+    not; this unit simply agrees either way, and a sibling model with only one
+    of the two filled in is what would decide it.
+    """
+    return resp[HDR_PROFILE]
+
+
+# --- CLASS_MACRO subcommands (tgdevice.js: CLASS_MACRO_CMD_LIST) ------------
+MCO_CMD_SOTRAGE_INFO = 0               # declared by the vendor, never sent [sic]
+MCO_CMD_ID_LIST = 1                    # implemented (read)
+MCO_CMD_CREATE = 2                     # write, persistent
+MCO_CMD_DELETE = 3                     # write, persistent
+MCO_CMD_NAME = 4                       # the vendor reads it and discards it
+MCO_CMD_MEMORY = 5                     # implemented (read); the SET is not
+MCO_CMD_MINI_DELAY = 6                 # declared by the vendor, never sent
+
+
+def build_get_macro_id_list_probe(profile_id=0):
+    """Port of tgdevice.js `GetMacroIdList` — a GetMultiPacketCmd probe.
+
+    ProfileId 0, like the LED and profile id lists: which macros exist is not a
+    question about one profile.
+    """
+    return build_multipacket_probe(profile_id, CLASS_MACRO, MCO_CMD_ID_LIST)
+
+
+def parse_macro_id_list(data):
+    """Drop every zero — `DataArray.filter(A => 0 !== A)`, verbatim.
+
+    The third id list over this transport and the third post-processing rule.
+    `parse_led_region_id_list` collapses ids 0 and 1; `parse_profile_id_list`
+    filters nothing at all; this one drops zeros. A test asserts all three
+    disagree on one shared input, because the temptation to write any of them by
+    analogy with its neighbour is exactly what that test exists to defeat.
+    """
+    return [value for value in data if value != 0]
+
+
+def build_get_macro_data_probe(macro_id, profile_id=0):
+    """Port of `GetMacroData` — `GetMultiPacketCmd(0, CLASS_MACRO, 5|GET,
+    [macroId], out, 2)`.
+
+    First command here to pass GetMultiPacketCmd an argument, and the only one
+    so far to use a two-byte length: a macro's data can exceed the 255 bytes a
+    single-byte Total could describe. The id sits at PAYLOAD_BASE and the
+    Total/Offset pairs the chunk requests add come after it — see
+    `build_multipacket_chunk`, which already takes `args` and `width`.
+
+    CONFIRMED ON HARDWARE, which the plan for this slice predicted it would not
+    be: it assumed a keyboard with no macros would leave the combination
+    untestable. This unit reports one macro and returned its 27 bytes, so the
+    argument-plus-two-byte-length path is exercised end to end rather than only
+    by the byte-match tests.
+    """
+    return build_multipacket_probe(profile_id, CLASS_MACRO, MCO_CMD_MEMORY,
+                                   args=bytes([_byte("macro_id", macro_id)]))
+
+
+# --- macro step decoding — read-only, decodes bytes this project already reads
+# Recovered from the Windows app's recording page,
+# `OEMDriver.Pages.PageMacroTg::ParseKeyboardData`, not from either vendor
+# protocol source: the web driver passes macro data through untouched, and the
+# code that builds it lives in the app's UI layer. See PROTOCOL.md's
+# `CLASS_MACRO` section for the byte layout and how each opcode's confidence
+# differs — 0x04/0x05/0x0A/0x0B are confirmed against this keyboard's own
+# stored macro; 0x0C/0x0D are read from the encoder's IL and have never been
+# seen in real device data.
+MACRO_OP_KEYDOWN = 0x04
+MACRO_OP_KEYUP = 0x05
+MACRO_OP_DELAY_8 = 0x0A
+MACRO_OP_DELAY_16 = 0x0B
+MACRO_OP_DELAY_24 = 0x0C
+MACRO_OP_DELAY_RANDOM = 0x0D
+
+
+def parse_macro_steps(data):
+    """Decode a macro's recorded bytes into a list of step dicts.
+
+    This decodes data READ from a device, not the output of this project's own
+    encoder — none exists yet. Garbage must never become an exception: it
+    becomes a `{"op": "truncated"}` or `{"op": "unknown", ...}` entry, so a
+    caller can show what parsed and say plainly where it stopped, rather than
+    the whole macro vanishing behind a traceback.
+    """
+    steps = []
+    i = 0
+    while i < len(data):
+        op = data[i]
+        if op in (MACRO_OP_KEYDOWN, MACRO_OP_KEYUP):
+            if i + 1 >= len(data):
+                steps.append({"op": "truncated"})
+                break
+            steps.append({"op": "keydown" if op == MACRO_OP_KEYDOWN else "keyup",
+                          "usage": data[i + 1]})
+            i += 2
+        elif op == MACRO_OP_DELAY_8:
+            if i + 1 >= len(data):
+                steps.append({"op": "truncated"})
+                break
+            steps.append({"op": "delay", "ms": data[i + 1]})
+            i += 2
+        elif op == MACRO_OP_DELAY_16:
+            if i + 2 >= len(data):
+                steps.append({"op": "truncated"})
+                break
+            steps.append({"op": "delay",
+                          "ms": (data[i + 1] << 8) | data[i + 2]})
+            i += 3
+        elif op == MACRO_OP_DELAY_24:
+            if i + 3 >= len(data):
+                steps.append({"op": "truncated"})
+                break
+            steps.append({"op": "delay", "ms": (data[i + 1] << 16)
+                          | (data[i + 2] << 8) | data[i + 3]})
+            i += 4
+        elif op == MACRO_OP_DELAY_RANDOM:
+            if i + 4 >= len(data):
+                steps.append({"op": "truncated"})
+                break
+            # Not validated against min <= max: the vendor's own encoder does
+            # not check this either (read from its IL), so inventing a check
+            # here would reject something the real firmware may accept.
+            steps.append({
+                "op": "random_delay",
+                "min_ms": (data[i + 1] << 8) | data[i + 2],
+                "max_ms": (data[i + 3] << 8) | data[i + 4],
+            })
+            i += 5
+        else:
+            steps.append({"op": "unknown", "opcode": op})
+            i += 1
+    return steps
+
+
+def build_macro_steps(steps):
+    """The inverse of `parse_macro_steps`: a list of step dicts back to bytes.
+
+    Unlike the decoder, this builder DOES raise on bad input — it can put
+    bytes on a keyboard, so golden rule 2 applies: nothing reaches the wire
+    that has not been validated.
+
+    The delay opcode is the smallest one that fits, matching
+    `ParseKeyboardData`'s own bounds (255 / 65535 / 16777215) — not always the
+    3-byte form, which would decode correctly but would not match what the
+    vendor's own recorder produces.
+    """
+    def field(step, name):
+        # A missing key is the same class of bad input as an out-of-range
+        # value — a malformed step dict — and must raise the same ValueError
+        # every other rejection here does, not a KeyError from indexing.
+        if name not in step:
+            raise ValueError(f"macro step {step.get('op')!r} needs {name!r}")
+        return step[name]
+
+    out = bytearray()
+    for step in steps:
+        op = step.get("op")
+        if op in ("keydown", "keyup"):
+            usage = _byte("usage", field(step, "usage"))
+            out.append(MACRO_OP_KEYDOWN if op == "keydown" else MACRO_OP_KEYUP)
+            out.append(usage)
+        elif op == "delay":
+            ms = field(step, "ms")
+            # The range check comes BEFORE picking a size, not folded into the
+            # size branches: `ms <= 0xFFFF` is true for -1 too, so a negative
+            # value would otherwise fall into the 2-byte branch and silently
+            # encode as 0xFFFF instead of being refused.
+            if not isinstance(ms, int) or isinstance(ms, bool) \
+               or not 0 <= ms <= 0xFFFFFF:
+                raise ValueError(f"delay ms must be 0..16777215, got {ms!r}")
+            if ms <= 0xFF:
+                out.append(MACRO_OP_DELAY_8)
+                out.append(ms)
+            elif ms <= 0xFFFF:
+                out.append(MACRO_OP_DELAY_16)
+                out.append((ms >> 8) & 0xFF)
+                out.append(ms & 0xFF)
+            else:
+                out.append(MACRO_OP_DELAY_24)
+                out.append((ms >> 16) & 0xFF)
+                out.append((ms >> 8) & 0xFF)
+                out.append(ms & 0xFF)
+        elif op == "random_delay":
+            min_ms = field(step, "min_ms")
+            max_ms = field(step, "max_ms")
+            for name, value in (("min_ms", min_ms), ("max_ms", max_ms)):
+                if not isinstance(value, int) or isinstance(value, bool) \
+                   or not 0 <= value <= 0xFFFF:
+                    raise ValueError(f"{name} must be 0..65535, got {value!r}")
+            if min_ms > max_ms:
+                # The decoder (which reads DEVICE data) accepts an inverted
+                # range without complaint, because nobody has ever observed
+                # what the firmware does with one and a decoder must never
+                # raise on data it did not choose. This builder is different:
+                # it can put bytes on a keyboard, nobody has a legitimate
+                # reason to construct a backwards range, and rejecting it
+                # costs nothing.
+                raise ValueError(
+                    f"random_delay min_ms ({min_ms}) must not exceed "
+                    f"max_ms ({max_ms})")
+            out.append(MACRO_OP_DELAY_RANDOM)
+            out.append((min_ms >> 8) & 0xFF)
+            out.append(min_ms & 0xFF)
+            out.append((max_ms >> 8) & 0xFF)
+            out.append(max_ms & 0xFF)
+        else:
+            raise ValueError(f"unknown macro step op: {op!r}")
+    return bytes(out)
+
+
+# --- CLASS_DEVICE (0) — wireless dongle status, read-only, CONFIRMED --------
+# Recovered from the web driver AND the Windows app, which agree on class and
+# command but disagree on HDR_SIZE (7 vs 6) — see the builder's own docstring.
+# This queries the DONGLE (VID 260D PID 0042), a second physical device from
+# the keyboard; `device.find_dongle()`/`device.open_dongle()` reach it once
+# `packaging/60-ek75.rules` covers its PID. Confirmed on hardware — see
+# PROTOCOL.md's `CLASS_DEVICE` section for the exact bytes.
+DEV_CMD_WIRELESS_CONNECT_STATUS = 32
+
+
+def build_get_wireless_connect_status():
+    """Port of tgdevice.js `GetWirelessConnectState`.
+
+    `HDR_STATUS=0`, not `TARGET_ID` — every other builder in this file writes
+    `TARGET_ID`, and this one deliberately does not. The web driver hardcodes
+    0 here rather than using `this.TargetId`; the Windows app's own
+    `TgUsbHidDevice` uses a per-session "selected device" field instead, an
+    abstraction for a multi-device UI this project has no equivalent of.
+    Since this project would open the dongle's own hidraw node directly rather
+    than route a request through some other selected target, 0 — the web
+    driver's value, and this project's existing `TARGET_ID` constant — is kept
+    rather than picked arbitrarily.
+
+    `HDR_SIZE=7`: the one point the two vendor sources disagree on (the
+    Windows app sends 6), for a field this request does not otherwise use —
+    there is no payload either way.
+
+    CONFIRMED ON HARDWARE: this exact 64-byte packet was sent to the dongle
+    (`/dev/hidraw3` on the machine this was developed against, opened via
+    `device.open_dongle()` once `packaging/60-ek75.rules` was extended to
+    cover PID 0042) and produced a real, ready reply — see PROTOCOL.md and
+    `tests/test_protocol.py`'s `test_get_wireless_connect_status_confirmed
+    _on_hardware`.
+    """
+    pkt = _new_packet()
+    pkt[HDR_STATUS] = 0
+    pkt[HDR_SIZE] = 7
+    pkt[HDR_CLASS] = CLASS_DEVICE
+    pkt[HDR_COMMAND] = DEV_CMD_WIRELESS_CONNECT_STATUS | GET_CMD
+    return bytes(pkt)
+
+
+def parse_wireless_connect_status(resp):
+    """Decode `GetWirelessConnectState`'s reply: how many devices this dongle
+    has paired, and each one's status and PID.
+
+    `target_id` for slot `t` is `(t + 1) << 4` — computed from the slot's
+    position, not a field the reply carries — matching the vendor source's
+    own `A.ConnectInfo[t].TargetId = t+1<<4` exactly.
+    """
+    count = resp[PAYLOAD_BASE]
+    slots = []
+    base = PAYLOAD_BASE + 1
+    for t in range(count):
+        offset = base + 3 * t
+        slots.append({
+            "target_id": (t + 1) << 4,
+            "status": resp[offset],
+            "pid": (resp[offset + 1] << 8) | resp[offset + 2],
+        })
+    return {"count": count, "slots": slots}

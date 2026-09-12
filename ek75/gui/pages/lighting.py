@@ -13,7 +13,8 @@ from tkinter import ttk
 from ...core import protocol
 from .. import i18n, theme
 from ..keyboard_view import KeyboardView
-from ..widgets import ColorPicker, EffectGrid, LabeledScale, ScrollFrame, SegmentedButtons
+from ..widgets import (ColorPicker, ColorSlots, EffectGrid, LabeledScale,
+                        ScrollFrame, SegmentedButtons)
 
 # Friendly names for the regions this hardware is known to have. Anything else
 # discovered at runtime is shown as "Region N" rather than guessed at.
@@ -102,6 +103,15 @@ class LightingPage(ttk.Frame):
         self._color_section.pack(fill="x")
         ttk.Label(self._color_section, text=i18n.t("color"),
                   style="Heading.TLabel").pack(anchor="w", pady=(0, 6))
+        # Shown only for the effects that actually use more than one colour —
+        # Breathing and Starlit. For everything else the firmware draws
+        # colors[0] and ignores the rest, so offering a list would be offering
+        # something the keyboard will not do.
+        self._slots = ColorSlots(self._color_section, self._on_slots_changed,
+                                  self._on_slot_selected)
+        self._slots_note = ttk.Label(self._color_section, text=i18n.t("color_list_note"),
+                                      style="Muted.TLabel", wraplength=300,
+                                      justify="left")
         self._color = ColorPicker(self._color_section, self._on_color_changed)
         self._color.pack(fill="x")
         self._color_absent = ttk.Label(self._color_holder, text="",
@@ -289,6 +299,18 @@ class LightingPage(ttk.Frame):
         else:
             self._color_absent.pack_forget()
             self._color_section.pack(fill="x")
+            limit = protocol.max_colors_for(effect)
+            self._slots.configure_limit(limit)
+            # Hidden in RGB mode too: an empty list is the firmware colouring
+            # the effect itself, which is not a list with zero entries. Leaving
+            # the row up would show swatches that no longer describe anything.
+            if limit > 1 and state.colors:
+                self._slots.set_colors(state.colors)
+                self._slots.pack(fill="x", pady=(0, 4), before=self._color)
+                self._slots_note.pack(anchor="w", pady=(0, 6), before=self._color)
+            else:
+                self._slots.pack_forget()
+                self._slots_note.pack_forget()
 
         if protocol.has_speed(effect):
             self._speed_absent.pack_forget()
@@ -330,13 +352,54 @@ class LightingPage(ttk.Frame):
         self._apply()
 
     def _on_color_changed(self, colors):
-        """`colors` is [] for RGB mode, or [(r, g, b)] — see widgets.ColorPicker."""
+        """`colors` is [] for RGB mode, or [(r, g, b)] — see widgets.ColorPicker.
+
+        On a multi-colour effect the picker edits whichever slot is selected,
+        so its single colour is folded into the list rather than replacing it.
+        RGB mode ([]) still clears the whole list: it is the firmware colouring
+        the effect itself, which is not one entry in a list.
+        """
+        state = self._state
+        if state is None:
+            return
+        multi = protocol.max_colors_for(state.effect) > 1
+        if colors and multi and self._slots.winfo_manager():
+            self._slots.set_selected_color(colors[0])
+            return                      # set_selected_color re-enters via slots
+        state.colors = list(colors)
+        self._update_preview()
+        self._apply()
+        if multi:
+            # Entering or leaving RGB mode changes whether the list exists at
+            # all, so the row has to be re-decided rather than left as it was.
+            self._sync_color_slots()
+
+    def _sync_color_slots(self):
+        """Show the slot row only when there is a list for it to describe."""
+        state = self._state
+        if state is None:
+            return
+        if protocol.max_colors_for(state.effect) > 1 and state.colors:
+            self._slots.set_colors(state.colors)
+            self._slots.pack(fill="x", pady=(0, 4), before=self._color)
+            self._slots_note.pack(anchor="w", pady=(0, 6), before=self._color)
+        else:
+            self._slots.pack_forget()
+            self._slots_note.pack_forget()
+
+    def _on_slots_changed(self, colors):
         state = self._state
         if state is None:
             return
         state.colors = list(colors)
         self._update_preview()
         self._apply()
+
+    def _on_slot_selected(self, rgb):
+        """Point the picker at the chip the user just clicked, without letting
+        that look like an edit — `set_color` must not fire `_on_color_changed`
+        or clicking a chip would rewrite the slot it just selected."""
+        self._color.set_colors([rgb], notify=False)
 
     def _on_brightness_changed(self, percent, final):
         state = self._state

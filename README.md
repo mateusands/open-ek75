@@ -114,11 +114,46 @@ Husky HTG-series unit): region `1` is the per-key matrix (a 6x15 LED grid) and
 region `4` is the side light bar (a strip of 16). `open-ek75 probe` asks your
 own keyboard which zones it has, and which effects each one supports.
 
-**Not implemented**: per-key colour maps, key remapping, macros, multiple
-profiles, and anything outside RGB lighting (this chip's shared protocol also
-covers battery/power state, since this model has one). The GUI shows those as
-named, unimplemented features rather than hiding them — each one says which
-command class it needs.
+**Reading is further along than writing**, and the split is deliberate: a read
+can be wrong and you just get a wrong answer, while a write can leave a
+physical keyboard in a state you cannot get out of.
+
+*Implemented, read-only*: the battery level and idle timer, the key map (`keys`
+— what every key does on both layers, taken from the keyboard rather than from
+the vendor's profile, which disagrees with this hardware 23 times), which
+profiles exist and which is active, and the stored macros (`probe`).
+
+That last one is worth a sentence: Dareu's device profile does not contain the
+word "macro", and the keyboard this was built against has one stored anyway. The
+raw bytes are shown because the format is not decoded — the code that builds it
+is not in any vendor file this project has, and a guess at the keystrokes would
+be an invented format.
+
+*Implemented, and it writes*: the lighting, and **remapping a key** from the
+GUI's Keys page — pick a key, pick a layer, and assign it another key (with
+Ctrl/Shift/Alt/Win if you want), a media key, or whatever another key on your
+keyboard already does. `backup` records the key map alongside the lighting and
+`restore` puts both back; use `--keys-only` or `--lighting-only` to move just
+one of them.
+
+Nothing is written until a key map has been backed up, and two keys can never be
+remapped: whichever ones carry `Fn` and the factory reset. Together they are
+**`Fn`+`Esc`, a factory reset built into the firmware** — the way back that needs
+nothing from this software, and which remapping either half would destroy.
+
+**Profiles** are named files on this machine — `open-ek75 profiles`, or the
+Profiles page. That is not a workaround for the device's single profile: it is
+where the vendor's own app keeps its Profile 1/2/3 too, which was settled by
+decompiling both of Dareu's implementations. What it does not give is switching
+with a key on the keyboard.
+
+**Not implemented**: per-key colour maps, recording or editing macros, and
+creating a second profile in the device's own memory. The last one is worth being blunt about: the official
+Windows app shows Profile 1/2/3, and this keyboard reports exactly one. The
+other two are not hidden — they do not exist, and creating them is a persistent
+write whose undo has never been tested. The GUI shows unimplemented features as
+named and unimplemented rather than hiding them, each saying which command class
+it needs.
 See [PROTOCOL.md](PROTOCOL.md) — specifically "What is not
 implemented yet" and "What to try next" — for the full map of what is known
 but unported, versus genuinely unknown.
