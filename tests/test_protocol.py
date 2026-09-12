@@ -1025,6 +1025,106 @@ def test_the_keys_that_must_not_be_remapped_are_found_in_the_live_map():
     assert keymap.locked_keys({(9, 0): None}) == set()
 
 
+def test_find_key_for_keyboard_usage_reads_the_live_map_not_the_profile():
+    """The reverse of `describe()`: a HID usage a keypress resolved to, in,
+    which physical key (and which LAYER) currently sends it out. Deliberately
+    built from a hand-written live map rather than `layout.load()`'s static
+    profile — the whole point (`fn_shortcuts_from_map`'s docstring) is that
+    this project trusts the keyboard's own answer over the profile, which is
+    wrong for 23 assignments on the unit this was measured against.
+    """
+    from ek75.core import keymap
+
+    key_map = {
+        (42, 0): {"function_id": 6, "data": [0, 4, 0, 0, 0]},      # A
+        (1, 0): {"function_id": 6, "data": [0, 41, 0, 0, 0]},      # Esc
+        (61, 1): {"function_id": 6, "data": [0, 4, 0, 0, 0]},      # Fn+something -> A too
+        (9, 0): None,                                             # did not answer
+    }
+    assert keymap.find_key_for_keyboard_usage(key_map, 4) in ((42, 0), (61, 1))
+    assert keymap.find_key_for_keyboard_usage(key_map, 41) == (1, 0)
+    assert keymap.find_key_for_keyboard_usage(key_map, 200) is None
+    assert keymap.find_key_for_keyboard_usage({}, 4) is None
+
+
+def test_find_key_for_keyboard_usage_does_not_confuse_a_bare_key_with_a_modified_one():
+    """A key remapped to Ctrl+C sends the same `data[1]` (6, usage for 'C')
+    as the plain C key, plus a modifier bit an ordinary, unshifted keysym
+    press never carries. Found by `/code-review`: the first version of this
+    function only checked `data[1]`, so whichever of the two happened to come
+    first in `key_map`'s iteration order answered for BOTH the bare usage and
+    the Ctrl+C combo — a real defect, not a hypothetical one, since Python
+    dict order depends on insertion order and this project reads the map
+    fresh from 166 device replies each session.
+    """
+    from ek75.core import keymap
+
+    key_map = {
+        (99, 0): {"function_id": 6, "data": [0x01, 6, 0, 0, 0]},    # Ctrl+C
+        (61, 0): {"function_id": 6, "data": [0, 6, 0, 0, 0]},       # bare C
+    }
+    assert keymap.find_key_for_keyboard_usage(key_map, 6) == (61, 0)
+
+
+def test_find_key_for_keyboard_usage_translates_a_modifier_usage_to_its_bit():
+    """0xE0-0xE7 is the encoding a MACRO step uses for a modifier
+    (`HID_MODIFIER_USAGES`) — CombineKey (6) never puts a modifier there as
+    `data[1]`; it lives in `data[0]`'s bitmask instead (`HID_MODIFIERS`). A
+    keypress resolving to usage 0xE0 (Left Ctrl) must still find the actual
+    Ctrl key, which the live map reports as a BARE modifier — `data[1]==0`,
+    `data[0]==0x01` — not as an ordinary usage match.
+    """
+    from ek75.core import keymap
+
+    key_map = {
+        (107, 0): {"function_id": 6, "data": [0x01, 0, 0, 0, 0]},   # L-Ctrl, bare
+        (108, 0): {"function_id": 6, "data": [0x02, 0, 0, 0, 0]},   # L-Shift, bare
+        # A combo (Ctrl+C) must NOT be mistaken for the bare Ctrl key itself —
+        # its data[1] is non-zero, so the modifier-usage branch must reject it.
+        (109, 0): {"function_id": 6, "data": [0x01, 6, 0, 0, 0]},
+    }
+    assert keymap.find_key_for_keyboard_usage(key_map, 0xE0) == (107, 0)  # Left Ctrl
+    assert keymap.find_key_for_keyboard_usage(key_map, 0xE1) == (108, 0)  # Left Shift
+    assert keymap.find_key_for_keyboard_usage(key_map, 0xE4) is None      # no R-Ctrl here
+
+
+def test_find_key_for_consumer_usage_reads_the_live_map():
+    """`find_key_for_keyboard_usage`'s sibling for `MediaKeys` (8) — the
+    Consumer page, checked against this project's own `CONSUMER_KEYS` usage
+    numbers rather than made-up ones.
+    """
+    from ek75.core import keymap
+
+    key_map = {
+        (6, 1): {"function_id": 8, "data": [0, 0xB7, 0, 0, 0]},      # Stop
+        (10, 1): {"function_id": 8, "data": [1, 0x94, 0, 0, 0]},     # My computer
+        (61, 0): {"function_id": 6, "data": [0, 4, 0, 0, 0]},        # unrelated
+    }
+    assert keymap.find_key_for_consumer_usage(key_map, 0xB7) == (6, 1)
+    assert keymap.find_key_for_consumer_usage(key_map, 0x194) == (10, 1)
+    assert keymap.find_key_for_consumer_usage(key_map, 0xCD) is None
+    assert keymap.find_key_for_consumer_usage({}, 0xB7) is None
+
+
+def test_describe_assignment_is_the_one_formatter_both_pages_share():
+    """`gui/pages/keys.py` and `gui/pages/key_test.py` each had their own
+    private `_describe`, byte-for-byte identical — found by `/code-review`.
+    One shared function in `core/keymap.py` instead, so a future fix to this
+    formatting cannot land in one page and not the other.
+    """
+    from ek75.core import keymap
+
+    assert keymap.describe_assignment(None, "en") == "—"
+    assert keymap.describe_assignment(
+        {"function_id": 6, "data": [0, 41, 0, 0, 0]}, "en") == "Esc"
+    assert keymap.describe_assignment(
+        {"function_id": 6, "data": [0, 41, 0, 0, 0]}, "pt") == "Esc"
+    # function_id 99 names nothing in FUNCTION_NAMES — the fallback, not a
+    # guessed label.
+    assert keymap.describe_assignment(
+        {"function_id": 99, "data": [1, 2, 3, 4, 5]}, "en") == "fid=99 [1, 2, 3, 4, 5]"
+
+
 def test_only_vetted_functions_can_be_copied_from_one_key_to_another():
     """Copying bytes the keyboard produced is safe only if the *function* is.
 

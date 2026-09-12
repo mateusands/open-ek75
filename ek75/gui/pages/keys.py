@@ -214,12 +214,7 @@ class KeysPage(ttk.Frame):
                 f"{i18n.t('keys_base')}: {base}\n{i18n.t('keys_fn')}: {fn}")
 
     def _describe(self, assignment):
-        if assignment is None:
-            return "—"
-        described = keymap.describe(assignment["function_id"], assignment["data"])
-        if described is None:
-            return f"fid={assignment['function_id']} {assignment['data']}"
-        return described[0 if i18n.LANG == "en" else 1]
+        return keymap.describe_assignment(assignment, i18n.LANG)
 
     def _show_summary(self):
         key = self._selected_key

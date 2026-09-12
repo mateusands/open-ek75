@@ -226,6 +226,90 @@ def locked_keys(key_map):
     return locked
 
 
+def find_key_for_keyboard_usage(key_map, usage):
+    """The (KeyId, layer) whose CURRENT assignment sends this Keyboard-page
+    (0x07) usage — the reverse of `describe()`: given what a live keypress
+    resolved to, which physical key, on which layer, produced it. `None` when
+    nothing does.
+
+    Searches the LIVE key map (the shape `lighting.Session.read_key_map`
+    returns: `{(key_id, layer): assignment or None}`), not the static
+    profile, for the reason `fn_shortcuts_from_map`'s own docstring already
+    gives: this keyboard's profile disagrees with the keyboard on 23
+    assignments (`PROTOCOL.md`).
+
+    A modifier usage (0xE0-0xE7) needs its own path: `CombineKey` (6) never
+    puts a modifier there as `data[1]` — a bare modifier's usage lives in
+    `data[0]`'s BITMASK instead (`HID_MODIFIERS`), a different encoding for
+    the same physical key (see `HID_MODIFIER_USAGES`'s own docstring).
+    Translating the usage to its matching bit first is what lets a
+    `Control_L` keypress resolve to the actual Ctrl key, rather than never
+    matching anything because no ordinary assignment's `data[1]` is ever a
+    modifier usage.
+
+    An ORDINARY usage match requires `data[0] == 0` (no modifier bits) —
+    found missing by `/code-review`: an unshifted keysym press (Tk reports
+    plain "c", not "Control_L") can never carry a modifier, but a key
+    remapped to e.g. Ctrl+C sends the SAME `data[1]` (6). Without the
+    `data[0]` check, whichever of the two happened to come first in
+    `key_map`'s iteration order would answer for both — the ordinary usage 6
+    and the Ctrl+C combo are different assignments and must not be
+    conflated.
+
+    Returns None when nothing in the live map currently sends this usage —
+    honest for an unassigned key, one this project's copy-list left off, or
+    simply no keyboard connected (an empty `key_map`).
+    """
+    is_modifier = 0xE0 <= usage <= 0xE7
+    bit = HID_MODIFIERS[usage - 0xE0][0] if is_modifier else None
+
+    for (key_id, layer), value in key_map.items():
+        if value is None or value["function_id"] != 6:
+            continue
+        data = list(value["data"]) + [0, 0, 0, 0, 0]
+        if is_modifier:
+            if data[0] == bit and not data[1]:
+                return key_id, layer
+        elif data[0] == 0 and data[1] == usage:
+            return key_id, layer
+    return None
+
+
+def find_key_for_consumer_usage(key_map, usage):
+    """`find_key_for_keyboard_usage`'s sibling for `MediaKeys` (8) instead of
+    `CombineKey` (6) — same (KeyId, layer)-or-None return, same live-map
+    source, same "nothing currently assigned sends it" meaning for `None`.
+    """
+    for (key_id, layer), value in key_map.items():
+        if value is None or value["function_id"] != 8:
+            continue
+        data = list(value["data"]) + [0, 0, 0, 0, 0]
+        if (data[0] << 8 | data[1]) == usage:
+            return key_id, layer
+    return None
+
+
+def describe_assignment(assignment, lang):
+    """One live key-map entry, as text in one language — `describe()`'s
+    (english, portuguese) pair, picked by `lang` ("en" or anything else for
+    portuguese, matching `gui/i18n.py`'s own `LANG` values), an em dash for no
+    assignment, or `fid=N data` for a code neither table names.
+
+    The one shared formatter — found duplicated verbatim between
+    `gui/pages/keys.py` and `gui/pages/key_test.py` by `/code-review` (both
+    pages had their own private `_describe`, byte-for-byte identical). Lives
+    here rather than in `gui/` so a THIRD page reaches for this instead of
+    writing a third copy: `core/keymap.py` already owns every other piece of
+    "what does this live assignment mean".
+    """
+    if assignment is None:
+        return "—"
+    described = describe(assignment["function_id"], assignment["data"])
+    if described is None:
+        return f"fid={assignment['function_id']} {assignment['data']}"
+    return described[0 if lang == "en" else 1]
+
+
 def describe_macro_usage(usage):
     """A HID usage byte from a MACRO step, as an (english, portuguese) name.
 

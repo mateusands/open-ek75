@@ -17,12 +17,14 @@ from .controller import Controller
 from .pages.home import HomePage
 from .pages.lighting import LightingPage
 from .pages.keys import keys_page
+from .pages.key_test import key_test_page
 from .pages.macros import macros_page
 from .pages.profiles import profiles_page
 
 NAV = [
     ("home", "⌂", "nav_home"),
     ("keys", "⌨", "nav_keys"),
+    ("keytest", "⌖", "nav_keytest"),
     ("lighting", "✺", "nav_lighting"),
     ("macros", "Ⓜ", "nav_macros"),
     ("profiles", "▤", "nav_profiles"),
@@ -99,6 +101,7 @@ class App(tk.Tk):
         self._pages["home"] = HomePage(self._content, self)
         self._pages["lighting"] = LightingPage(self._content, self)
         self._pages["keys"] = keys_page(self._content, self)
+        self._pages["keytest"] = key_test_page(self._content, self)
         self._pages["macros"] = macros_page(self._content, self)
         self._pages["profiles"] = profiles_page(self._content, self)
         # Always the device page on launch: it is the one that says what is

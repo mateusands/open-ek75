@@ -151,6 +151,40 @@ STRINGS = {
         "keys_no_targets": ("Nothing to copy: this keyboard reports no "
                              "assignment from the vetted list. Resets, pairing "
                              "and the knob are deliberately not copyable."),
+        "nav_keytest": "Key test",
+        "keytest_blurb": ("Press a physical key and watch it light up here — "
+                          "reading ordinary keyboard events, not a Dareu "
+                          "command. See what's tested below for what this "
+                          "can't confirm."),
+        "keytest_focus_hint": "Click the keyboard, then start typing.",
+        "keytest_listening": "Listening — press any key to test it.",
+        "keytest_needs_device": "Connect the keyboard to test its keys.",
+        "keytest_idle": "Waiting for a keypress…",
+        "keytest_unknown_keysym": ("Got a key event ({keysym}) this project's "
+                                   "table doesn't have a USB usage for yet."),
+        "keytest_no_match": ("Resolved to a usage ({keysym} → USB usage "
+                             "0x{usage:02X}), but no key on this keyboard "
+                             "currently sends it."),
+        "keytest_pressed": "{keysym}  →  {label}  (KeyID {id}){lock}",
+        "keytest_currently": "Currently assigned — {layer}: {name}",
+        "keytest_limits_title": "What this can't confirm",
+        "keytest_limits": (
+            "• Fn itself never shows as its own event — it has no HID usage; "
+            "the keyboard's own controller decides what OTHER key to send.\n\n"
+            "• The four Fn-lighting shortcuts (brightness, speed, cycle effect, "
+            "cycle colour) only show up by polling the lighting state "
+            "(`watch`), never as a keyboard event here.\n\n"
+            "• Fn+Esc (factory reset) is deliberately never invited — the "
+            "locked key below shows a 🔒 instead.\n\n"
+            "• Print Screen and the media/volume/brightness keys may never "
+            "reach a focused window at all: many desktops claim them for "
+            "their own screenshot tool or on-screen volume display before "
+            "any application sees them. That's the desktop, not a fault of "
+            "this keyboard or this page.\n\n"
+            "• Window-manager shortcuts (Alt+Tab, Super+anything) are grabbed "
+            "globally the same way.\n\n"
+            "• This does not check rollover/anti-ghosting — a missing event "
+            "here could mean the keyboard dropped it, or the desktop did."),
         "backup_unreadable": "{name} is not a backup this can read ({detail}).",
         "restoring": "Restoring the lighting…",
         "restoring_keys": "Restoring the lighting and the key map — the key map "
@@ -367,6 +401,42 @@ STRINGS = {
         "keys_no_targets": ("Nada para copiar: este teclado não reporta nenhuma "
                              "atribuição da lista permitida. Resets, pareamento "
                              "e o knob não são copiáveis de propósito."),
+        "nav_keytest": "Teste de teclas",
+        "keytest_blurb": ("Aperte uma tecla física e veja ela acender aqui — "
+                          "lendo eventos comuns de teclado, não um comando "
+                          "Dareu. Veja abaixo o que isso não consegue "
+                          "confirmar."),
+        "keytest_focus_hint": "Clique no teclado e comece a digitar.",
+        "keytest_listening": "Ouvindo — aperte qualquer tecla para testar.",
+        "keytest_needs_device": "Conecte o teclado para testar as teclas dele.",
+        "keytest_idle": "Esperando uma tecla…",
+        "keytest_unknown_keysym": ("Chegou um evento de tecla ({keysym}) que "
+                                   "a tabela deste projeto ainda não tem um "
+                                   "usage USB definido."),
+        "keytest_no_match": ("Resolveu para um usage ({keysym} → usage USB "
+                             "0x{usage:02X}), mas nenhuma tecla deste teclado "
+                             "está mandando isso agora."),
+        "keytest_pressed": "{keysym}  →  {label}  (KeyID {id}){lock}",
+        "keytest_currently": "Atribuição atual — {layer}: {name}",
+        "keytest_limits_title": "O que isso não consegue confirmar",
+        "keytest_limits": (
+            "• O próprio Fn nunca aparece como um evento — ele não tem usage "
+            "HID; o controlador do teclado decide qual OUTRA tecla mandar.\n\n"
+            "• Os quatro atalhos Fn de iluminação (brilho, velocidade, trocar "
+            "efeito, trocar cor) só aparecem consultando o estado da "
+            "iluminação (`watch`), nunca como evento de teclado aqui.\n\n"
+            "• Fn+Esc (reset de fábrica) nunca é convidado de propósito — a "
+            "tecla travada abaixo mostra um 🔒 em vez disso.\n\n"
+            "• Print Screen e as teclas de mídia/volume/brilho podem nunca "
+            "chegar numa janela em foco: muitos ambientes gráficos capturam "
+            "elas antes para a própria ferramenta de captura de tela ou o "
+            "indicador de volume na tela. Isso é o ambiente gráfico, não uma "
+            "falha do teclado ou desta página.\n\n"
+            "• Atalhos do gerenciador de janelas (Alt+Tab, Super+qualquer "
+            "coisa) são capturados globalmente do mesmo jeito.\n\n"
+            "• Isso não verifica rollover/anti-ghosting — um evento que não "
+            "aparece aqui tanto pode ser o teclado que perdeu quanto o "
+            "ambiente gráfico que engoliu."),
         "backup_unreadable": "{name} não é um backup que dê para ler ({detail}).",
         "restoring": "Restaurando a iluminação…",
         "restoring_keys": "Restaurando a iluminação e o mapa de teclas — são 166 "
