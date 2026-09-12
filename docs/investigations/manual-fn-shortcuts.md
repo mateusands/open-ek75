@@ -198,3 +198,25 @@ in `brightness-ladder.md`, this is nonetheless the second confirmed case of
 a genuine `CLASS_LIGHTING` state change happening entirely through a
 firmware-local Fn shortcut, readable after the fact through the same
 `LED_CMD_ATTRIBUTE` poll this project already uses for everything else.
+
+**A second attempt at isolating the key (asking for `Fn`+`[` and `Fn`+`\`
+one at a time) did not settle it either.** `brightness` started changing
+mid-run without having been asked for, and stray characters (`/`, `.`, `;`,
+`ç`) reached the terminal as literal text — the same failure shape as
+`brightness-ladder.md`'s own Fn-timing attempts (a combo not held long
+enough registers as the bare key instead), compounded here by a real
+possibility this project has flagged before and never resolved: the
+physical key this document called "`\`, the key next to Enter" assumes a
+US/ANSI position, and the owner's actual keyboard is ABNT2
+(`manual-fn-shortcuts.md` §1) — the key in that position, or its label, may
+simply not match what a US layout would call it.
+
+**Left open, low priority, not worth another round of remote testing.**
+Both functions (53, 55) are confirmed real and working (§5's first test);
+only the exact physical key for 53 is unsettled, and two attempts at
+narrowing it by relayed keypresses have both failed the same way for
+reasons unrelated to the function itself. Closing this needs either the
+owner testing alone with the keyboard in hand (one key, isolated, held
+deliberately), or is simply not worth closing — nothing in this project
+depends on knowing which physical key it is, only on the function being
+real, which is settled.
