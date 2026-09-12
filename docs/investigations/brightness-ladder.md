@@ -240,6 +240,52 @@ owner pressing the keyboard's own physical shortcut, which is the same
 "replayed and visually confirmed" tier of evidence `PROTOCOL.md` already uses
 for `Speed`.
 
+## 3.1. Live attempt on real hardware — INCONCLUSIVE, not closed
+
+Run on the owner's actual TK51G/EK75, `watch 1` and `watch 4` both open,
+2026-09-11:
+
+- **`Fn`+`↑`/`Fn`+`↓` (arrow keys): zero change** to `brightness` on either
+  region, across two separate rounds. Checked the profile's own
+  `default-fn-function-Id` for the arrow keys directly (not assumed): both
+  arrows carry `function_id 6` (CombineKey) on their Fn layer with the SAME
+  keyboard-page usage as their base layer (82/81) — i.e. this profile
+  assigns arrows **no Fn function at all**. The read-only round-trip itself
+  is confirmed working correctly (it re-issues `LIT_CMD_GET_BRIGHTNESS`
+  every poll, not a cached value), so a flat `brightness=153`/`255` the
+  whole time is a real "nothing changed", not a client bug.
+- **Visually, `Fn`+`↓` made the Caps Lock/battery/wifi status indicators
+  blink white** — not backlight color, not brightness. This lines up with
+  `keymap.FUNCTION_NAMES[46]`, `"Show battery level"`, already in this
+  codebase from the decompile — but the profile assigns function 46 to
+  `Fn`+`` ` `` (grave), not to an arrow key, so which physical key the
+  owner actually triggered this with is not settled. Worth a cleaner retest
+  (press ONLY `Fn`+`` ` ``, isolated) before concluding anything about
+  which key does this.
+- **`Fn`+`Space` (the profile's `function_id 54`, `"Cycle brightness"`),
+  held/repeated: `region 1`'s `speed` field oscillated rapidly (1↔2↔3)
+  over several seconds** — brightness itself still never moved. A
+  single, quick tap of `Fn`+`Space` immediately after produced **no change
+  at all**, and the space character reached the terminal as ordinary text
+  — meaning `Fn` most likely was not held long enough to register as a
+  combo for that one tap (this keyboard's `Fn` behaves as a hold-then-press
+  modifier, not a tap-together one), so the earlier "speed oscillates" data
+  point is now suspect: it may not have been `Fn`+`Space` at all, since the
+  terminal filling with literal spaces in that round too suggests the same
+  timing failure happened repeatedly, not just once.
+
+**Net result:** brightness reading over the protocol is solid (unchanged
+conclusion from §3); whether `Fn`+`Space` actually is this unit's live
+brightness shortcut, and what (if anything) `Fn`+arrows or `Fn`+`` ` ``
+really do, is **not settled** — the attempts so far are more consistent
+with imprecise remote key-combo timing than with a clean negative. Not
+worth further rounds of text-relayed live testing right now (diminishing
+returns, each round adds a new ambiguity rather than resolving the last
+one); revisit if the owner wants to try again with the physical keyboard
+in hand and more deliberate timing (hold `Fn` down first, then tap the
+other key, release both together), or if `usbmon`/a similar capture ever
+becomes available to settle it without relying on narrated key presses.
+
 ## 4. Other constants worth extracting from the product DLLs' `FieldRva` data
 
 `Products/TK51G0101.dll` has exactly two `FieldRva` rows — no more static
