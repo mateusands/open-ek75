@@ -22,6 +22,20 @@ graphical interface, which is tkinter.
 > Not affiliated with or endorsed by Dareu, Husky, or any other brand this
 > keyboard is sold under. Use at your own risk.
 
+<p align="center">
+  <img src="assets/lighting.png" alt="open-ek75 Lighting page" width="720">
+</p>
+
+<details>
+<summary>More screens</summary>
+<p align="center">
+  <img src="assets/home.png" alt="open-ek75 Device page" width="720"><br>
+  <img src="assets/keys.png" alt="open-ek75 Keys page" width="720"><br>
+  <img src="assets/macros.png" alt="open-ek75 Macros page, showing a decoded macro" width="720"><br>
+  <img src="assets/keytest.png" alt="open-ek75 Key test page" width="720">
+</p>
+</details>
+
 ## Does this work with your keyboard?
 
 Run `lsusb` and look for **`260d:0101`**:
@@ -121,13 +135,24 @@ physical keyboard in a state you cannot get out of.
 *Implemented, read-only*: the battery level and idle timer, the key map (`keys`
 — what every key does on both layers, taken from the keyboard rather than from
 the vendor's profile, which disagrees with this hardware 23 times), which
-profiles exist and which is active, and the stored macros (`probe`).
+profiles exist and which is active, the stored macros (`probe`, or the GUI's
+Macros page), and a **key test screen** — press a physical key and watch it
+light up, reading ordinary OS keyboard events the same way the official
+software's own key-test screen does, never a Dareu command.
 
-That last one is worth a sentence: Dareu's device profile does not contain the
-word "macro", and the keyboard this was built against has one stored anyway. The
-raw bytes are shown because the format is not decoded — the code that builds it
-is not in any vendor file this project has, and a guess at the keystrokes would
-be an invented format.
+That macro line is worth a sentence: Dareu's device profile does not contain
+the word "macro", and the keyboard this was built against has one stored
+anyway. Its steps — key presses, releases, delays — are decoded from the
+Windows application's own recorder, not guessed: this project once showed the
+raw bytes because the format wasn't known, and it now is. Rewriting an
+existing macro's content is confirmed on hardware at the protocol level, but
+is not yet exposed as an editor in the CLI or GUI.
+
+Also read-only: the 2.4G dongle's wireless status (a second physical USB
+device, separate from the keyboard) — which device is currently paired to it,
+confirmed by actually sending the request. Pairing itself is not a protocol
+command on this keyboard; it's `Fn`+`1`/`2`/`3` and `Fn`+`Q`, run by the
+firmware — see [PROTOCOL.md](PROTOCOL.md).
 
 *Implemented, and it writes*: the lighting, and **remapping a key** from the
 GUI's Keys page — pick a key, pick a layer, and assign it another key (with
@@ -144,16 +169,18 @@ nothing from this software, and which remapping either half would destroy.
 **Profiles** are named files on this machine — `open-ek75 profiles`, or the
 Profiles page. That is not a workaround for the device's single profile: it is
 where the vendor's own app keeps its Profile 1/2/3 too, which was settled by
-decompiling both of Dareu's implementations. What it does not give is switching
-with a key on the keyboard.
+decompiling both of Dareu's implementations down to the instruction that
+constructs "Profile 1/2/3" in memory from a template file, never a device
+write. What it does not give is switching with a key on the keyboard.
 
-**Not implemented**: per-key colour maps, recording or editing macros, and
-creating a second profile in the device's own memory. The last one is worth being blunt about: the official
-Windows app shows Profile 1/2/3, and this keyboard reports exactly one. The
-other two are not hidden — they do not exist, and creating them is a persistent
-write whose undo has never been tested. The GUI shows unimplemented features as
-named and unimplemented rather than hiding them, each saying which command class
-it needs.
+**Not implemented**: per-key colour maps (this hardware's regions cannot
+receive them from any known vendor software — see PROTOCOL.md, it is a
+firmware ceiling, not a missing feature here), creating or renaming a macro
+(the two vendor sources package a name with the data in genuinely
+incompatible ways), and creating a second profile in the device's own memory
+(neither vendor implementation does this either — see above). The GUI shows
+unimplemented features as named and unimplemented rather than hiding them,
+each saying which command class it needs.
 See [PROTOCOL.md](PROTOCOL.md) — specifically "What is not
 implemented yet" and "What to try next" — for the full map of what is known
 but unported, versus genuinely unknown.
@@ -192,9 +219,11 @@ python3 main.py gui        # or `open-ek75 gui`, or `open-ek75-gui`, once instal
 ```
 
 It opens on **Device**: what this keyboard is, backup/restore, and the full
-list of Fn shortcuts. The other three pages match the official software's
-shape — **Lighting** (the working one), **Keys** and **Macros** (not
-implemented; they say so, and say which command class they would need).
+list of Fn shortcuts. **Keys** reads and remaps the key map; **Key test** is
+a live "press a key, see it light up" screen — the one page here that needs
+real keyboard focus, unlike the rest of the app; **Lighting** is the
+best-developed page; **Macros** shows what this keyboard has stored, decoded;
+**Profiles** saves and restores named local snapshots.
 
 The language switch is the `EN` / `PT-BR` pair in the header. It defaults to
 English and remembers your choice in `~/.config/open-ek75/settings.json`;

@@ -13,7 +13,7 @@ from tkinter import filedialog, ttk
 
 from ...core import device, keymap, layout, state
 from .. import i18n, theme
-from ..widgets import Card, ScrollFrame
+from ..widgets import Card, ScrollFrame, wrap_to_width
 
 MISSING_FEATURES = [
     ("todo_connection", "CLASS_POWER"),
@@ -67,9 +67,16 @@ class HomePage(ttk.Frame):
 
         backup = Card(right, f"{i18n.t('backup')} / {i18n.t('restore')}")
         backup.pack(fill="x")
-        ttk.Label(backup.body, text=i18n.t("backup_blurb"),
-                  style="PanelMuted.TLabel", justify="left").pack(anchor="w",
-                                                                  pady=(0, 10))
+        # The string used to carry its own hand-placed \n breaks, tuned to
+        # English's shorter phrasing; a ttk.Label with no wraplength does not
+        # wrap on its own, so the Portuguese translation's longer words ran
+        # past those fixed breaks and clipped mid-word at the card's edge. A
+        # fixed wraplength alone is still a guess about the column's width —
+        # wrap_to_width reads what pack() actually gave it instead.
+        backup_note = ttk.Label(backup.body, text=i18n.t("backup_blurb"),
+                                style="PanelMuted.TLabel", justify="left")
+        backup_note.pack(anchor="w", fill="x", pady=(0, 10))
+        wrap_to_width(backup_note)
         buttons = ttk.Frame(backup.body, style="Panel.TFrame")
         buttons.pack(anchor="w")
         self._backup_button = ttk.Button(buttons, text=i18n.t("backup"),
@@ -102,9 +109,10 @@ class HomePage(ttk.Frame):
         """
         card = Card(self, i18n.t("fn_guide"))
         card.pack(fill="both", expand=True, pady=(14, 0))
-        ttk.Label(card.body, text=i18n.t("fn_guide_hint"),
-                  style="PanelMuted.TLabel", justify="left").pack(anchor="w",
-                                                                   pady=(0, 8))
+        fn_hint = ttk.Label(card.body, text=i18n.t("fn_guide_hint"),
+                           style="PanelMuted.TLabel", justify="left")
+        fn_hint.pack(anchor="w", fill="x", pady=(0, 8))
+        wrap_to_width(fn_hint)
 
         # The rows are filled by _show_fn_shortcuts once the keyboard answers.
         # Nothing is listed from the vendor profile: 23 of its assignments
@@ -114,7 +122,8 @@ class HomePage(ttk.Frame):
         self._fn_grid_holder.pack(fill="both", expand=True)
         self._fn_status = ttk.Label(self._fn_grid_holder, text=i18n.t("fn_reading"),
                                      style="PanelMuted.TLabel", justify="left")
-        self._fn_status.pack(anchor="w")
+        self._fn_status.pack(anchor="w", fill="x")
+        wrap_to_width(self._fn_status)
         self._fn_grid = None
 
     def _load_fn_shortcuts(self):
@@ -147,7 +156,13 @@ class HomePage(ttk.Frame):
         # it is False for every widget under a withdrawn or not-yet-drawn
         # toplevel, packed or not.
         if not self._fn_status.winfo_manager():
-            self._fn_status.pack(anchor="w")
+            # fill="x", matching how this label was originally packed: without
+            # it, wrap_to_width's <Configure> binding stops receiving events
+            # for the parent's real width (an unfilled label sizes to its own
+            # content, not the cavity) and the wraplength freezes at whatever
+            # it last was — silently reviving the exact clipping bug this
+            # label was the original report for.
+            self._fn_status.pack(anchor="w", fill="x")
 
     def _show_fn_shortcuts(self, shortcuts):
         """Render the live list. Called on the Tk thread by the controller."""

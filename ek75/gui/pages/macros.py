@@ -17,7 +17,7 @@ from tkinter import ttk
 
 from ...core import keymap
 from .. import i18n, theme
-from ..widgets import Card, ScrollFrame
+from ..widgets import Card, ScrollFrame, wrap_to_width
 
 
 class MacrosPage(ttk.Frame):
@@ -28,8 +28,10 @@ class MacrosPage(ttk.Frame):
         self._loaded = False
 
         ttk.Label(self, text=i18n.t("nav_macros"), style="Title.TLabel").pack(anchor="w")
-        ttk.Label(self, text=i18n.t("macros_blurb"), style="Muted.TLabel",
-                  justify="left").pack(anchor="w", pady=(2, 12))
+        blurb = ttk.Label(self, text=i18n.t("macros_blurb"), style="Muted.TLabel",
+                         justify="left")
+        blurb.pack(anchor="w", fill="x", pady=(2, 12))
+        wrap_to_width(blurb)
 
         card = Card(self, i18n.t("macros_stored"))
         card.pack(fill="both", expand=True)
@@ -38,10 +40,13 @@ class MacrosPage(ttk.Frame):
         self._body.pack(fill="both", expand=True)
         self._status = ttk.Label(self._body.body, text=i18n.t("fn_reading"),
                                   style="PanelMuted.TLabel", justify="left")
-        self._status.pack(anchor="w")
+        self._status.pack(anchor="w", fill="x")
+        wrap_to_width(self._status)
 
-        ttk.Label(self, text=i18n.t("macros_writes"), style="Muted.TLabel",
-                  justify="left").pack(anchor="w", pady=(12, 0))
+        writes_note = ttk.Label(self, text=i18n.t("macros_writes"), style="Muted.TLabel",
+                              justify="left")
+        writes_note.pack(anchor="w", fill="x", pady=(12, 0))
+        wrap_to_width(writes_note)
 
     def _alive(self):
         try:

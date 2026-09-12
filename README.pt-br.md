@@ -22,6 +22,20 @@ gráfica, que é tkinter.
 > Sem afiliação com a Dareu, a Husky ou qualquer outra marca sob a qual este
 > teclado seja vendido, e sem endosso delas. Use por sua conta e risco.
 
+<p align="center">
+  <img src="assets/lighting-pt.png" alt="Página de Iluminação do open-ek75" width="720">
+</p>
+
+<details>
+<summary>Mais telas</summary>
+<p align="center">
+  <img src="assets/home-pt.png" alt="Página de Dispositivo do open-ek75" width="720"><br>
+  <img src="assets/keys-pt.png" alt="Página de Teclas do open-ek75" width="720"><br>
+  <img src="assets/macros-pt.png" alt="Página de Macros do open-ek75, mostrando uma macro decodificada" width="720"><br>
+  <img src="assets/keytest-pt.png" alt="Página de Teste de Teclas do open-ek75" width="720">
+</p>
+</details>
+
 ## Funciona com o seu teclado?
 
 Rode `lsusb` e procure por **`260d:0101`**:
@@ -125,14 +139,26 @@ deixar um teclado físico num estado do qual não se sai.
 *Implementado, somente leitura*: nível de bateria e temporizador de suspensão,
 o mapa de teclas (`keys` — o que cada tecla faz nas duas camadas, lido do
 teclado e não do perfil do fabricante, que discorda deste hardware em 23
-atribuições), quais perfis existem e qual está ativo, e as macros guardadas
-(`probe`).
+atribuições), quais perfis existem e qual está ativo, as macros guardadas
+(`probe`, ou a página Macros da interface), e uma **tela de teste de
+teclas** — aperte uma tecla física e veja ela acender na tela, lendo eventos
+comuns de teclado do sistema operacional, do mesmo jeito que a própria tela
+de teste do software oficial faz — nunca um comando da Dareu.
 
-Esta última merece uma frase: o perfil de dispositivo da Dareu não contém a
-palavra "macro", e o teclado em que isto foi construído tem uma guardada mesmo
-assim. Os bytes aparecem crus porque o formato não foi decodificado — o código
-que os monta não está em nenhum arquivo do fabricante que este projeto tem, e um
-palpite sobre as teclas seria um formato inventado.
+Essa linha das macros merece uma frase: o perfil de dispositivo da Dareu não
+contém a palavra "macro", e o teclado em que isto foi construído tem uma
+guardada mesmo assim. Os passos dela — teclas pressionadas, soltas, esperas —
+são decodificados a partir do próprio gravador do aplicativo Windows, não um
+palpite: este projeto já mostrou os bytes crus porque o formato era
+desconhecido, e agora não é mais. Reescrever o conteúdo de uma macro já
+existente é confirmado em hardware no nível do protocolo, mas ainda não está
+exposto como editor na CLI ou na interface gráfica.
+
+Também somente leitura: o status sem fio do dongle 2.4G (um segundo
+dispositivo USB físico, separado do teclado) — qual aparelho está pareado com
+ele agora, confirmado enviando o pedido de verdade. O pareamento em si não é
+um comando de protocolo neste teclado; é `Fn`+`1`/`2`/`3` e `Fn`+`Q`, feito
+pelo próprio firmware — veja o [PROTOCOL.md](PROTOCOL.md).
 
 *Implementado, e escreve*: a iluminação, e **remapear uma tecla** pela página
 Teclas da interface — escolha a tecla, escolha a camada, e atribua outra tecla
@@ -149,16 +175,19 @@ não depende deste software, e que remapear qualquer uma das duas destruiria.
 **Perfis** são arquivos nomeados nesta máquina — `open-ek75 profiles`, ou a
 página Perfis. Isso não é um contorno para o teclado ter um perfil só: é onde o
 app do próprio fabricante guarda o Profile 1/2/3 dele, o que foi resolvido
-decompilando as duas implementações da Dareu. O que não dá é trocar por uma
-tecla do teclado.
+decompilando as duas implementações da Dareu até a instrução exata que monta
+"Profile 1/2/3" na memória a partir de um arquivo template, nunca uma escrita
+no aparelho. O que não dá é trocar por uma tecla do teclado.
 
-**Não implementado**: mapas de cor por tecla, gravar ou editar macros, e criar um
-segundo perfil na memória do próprio aparelho. Este último merece ser dito sem rodeios: o
-aplicativo oficial do Windows mostra Perfil 1/2/3, e este teclado reporta
-exatamente um. Os outros dois não estão escondidos — eles não existem, e
-criá-los é uma escrita persistente cujo desfazer nunca foi testado. A interface
-mostra os itens não implementados nomeados como tais, em vez de escondê-los,
-cada um dizendo de qual classe de comando precisaria.
+**Não implementado**: mapas de cor por tecla (as regiões deste hardware não
+conseguem recebê-los de nenhum software do fabricante conhecido — veja o
+PROTOCOL.md, é um teto do firmware, não uma funcionalidade faltando aqui),
+criar ou renomear uma macro (as duas fontes vendor empacotam nome e dados de
+formas genuinamente incompatíveis), e criar um segundo perfil na memória do
+próprio aparelho (nenhuma das duas implementações vendor faz isso também —
+veja acima). A interface mostra os itens não implementados nomeados como
+tais, em vez de escondê-los, cada um dizendo de qual classe de comando
+precisaria.
 Veja o [PROTOCOL.md](PROTOCOL.md) — em especial "What is not implemented yet" e
 "What to try next" — para o mapa completo do que é conhecido mas não portado,
 versus o que é genuinamente desconhecido.
@@ -197,9 +226,12 @@ python3 main.py gui        # ou `open-ek75 gui`, ou `open-ek75-gui`, depois de i
 ```
 
 Abre em **Dispositivo**: o que é este teclado, backup/restauração e a lista
-completa de atalhos com Fn. As outras três páginas seguem o formato do software
-oficial — **Iluminação** (a que funciona), **Teclas** e **Macros** (não
-implementadas; elas dizem isso, e dizem de qual classe de comando precisariam).
+completa de atalhos com Fn. **Teclas** lê e remapeia o mapa de teclas; **Teste
+de teclas** é uma tela ao vivo de "aperte uma tecla, veja ela acender" — a
+única página aqui que precisa de foco de teclado de verdade, diferente do
+resto do app; **Iluminação** é a página mais desenvolvida; **Macros** mostra o
+que este teclado tem guardado, decodificado; **Perfis** salva e restaura
+instantâneos locais nomeados.
 
 O seletor de idioma é o par `EN` / `PT-BR` no cabeçalho. O padrão é inglês e a
 sua escolha fica guardada em `~/.config/open-ek75/settings.json`;
