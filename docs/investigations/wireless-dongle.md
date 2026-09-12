@@ -385,40 +385,47 @@ is consistent with, and adds no exception to, `PROTOCOL.md`'s existing
 
 ## 5. Proposed plan — slices, order, risk
 
+> **Update: a dongle turned out to be available after all.** This section
+> assumed "this project owns no dongle" throughout — wrong by the time steps
+> 1 and 2 were actually built. The machine this project is developed on has
+> one plugged in (VID `260D` PID `0042`, "USB 2.4G Receiver"). Steps 1 and 2
+> below are done; what stopped them from reaching hardware was a permission,
+> not an absent device — see PROTOCOL.md's `CLASS_DEVICE` section for the
+> full account. The plan below is left as originally written, for the record.
+
 No code is proposed to be written yet; this is a slicing proposal for future
 approval, ordered from lowest to highest risk/effort.
 
-1. **Read-only: detect the dongle's presence.** Add a `find_dongle()` in
-   `core/device.py` mirroring `find_device()`, matching VID `0x260D` PID
-   `0x0042` by report descriptor. No new protocol bytes — pure enumeration,
-   same risk class as the existing `find_device()`. Useful on its own: the
-   CLI/GUI could at least say "a Dareu 2.4G dongle is connected" instead of
-   silently not finding a keyboard when the user has the dongle plugged in
-   instead of the cable — directly serves the existing `open_device()` error
-   message, which already tells the user cable-not-dongle is required.
-2. **Read-only: `GetWirelessConnectStatus`.** Port `build_...`/`parse_...` for
-   `CLASS_DEVICE`/`DEV_CMD_WIRELESS_CONNECT_STATUS` (32) into `protocol.py`,
-   with a byte-match test whose docstring says plainly this is "transcribed
-   from two independent vendor sources that agree, never replayed against
-   real hardware" (this project owns no dongle) — same evidentiary honesty
-   this repo already asks of every builder. `core/lighting.py` gains a
-   `read_wireless_status()` that only works when talking to the dongle
-   endpoint (not the keyboard's), and only if step 1 finds one.
-3. **CLI/GUI surface, gated on hardware ownership.** Expose step 2's read
-   wherever battery is already shown, labelled clearly as unconfirmed until
-   this project's owner (or another contributor) actually plugs in a dongle
-   and can visually/behaviourally confirm the reply — this project's own
-   rule for `CLASS_POWER` and effects beyond Static/Breathing already sets
-   this precedent.
-4. **Stop here without a dongle.** Everything past step 3 —
+1. ~~**Read-only: detect the dongle's presence.**~~ **Done.** `find_dongle()`
+   in `core/device.py`, sharing its search logic with `find_device()` via one
+   `_find_vendor_feature_report(vid, pid)` helper rather than a copy.
+   Confirmed by hand on the real dongle: correctly and uniquely returns
+   `/dev/hidraw3` out of its 5 HID interfaces, using the existing detector
+   unmodified.
+2. ~~**Read-only: `GetWirelessConnectStatus`.**~~ **Built and tested, not
+   sent.** `protocol.build_get_wireless_connect_status` /
+   `parse_wireless_connect_status`, byte-match tested against both vendor
+   sources (which agree on class/command, disagree on `HDR_SIZE` — ported the
+   web driver's). Not sent: `/dev/hidraw3` on this machine is
+   `crw------- root:root`, and `packaging/60-ek75.rules` grants `uaccess`
+   only to the keyboard's PID. `open_dongle()` deliberately does not exist
+   yet — extending the udev rule is a system-level, owner-facing decision,
+   not something to bundle into a slice that reads as read-only.
+3. **CLI/GUI surface, gated on the permission above.** Nothing to expose yet
+   — there is no way to open the dongle and get an actual reply to show.
+   Revisit once the udev rule is extended and a real reply has been captured;
+   this project's own rule for `CLASS_POWER` and effects beyond
+   Static/Breathing already sets the precedent of labelling anything shown
+   before that as unconfirmed.
+4. **Stop here regardless.** Everything past step 3 —
    `DEV_CMD_WIRELESS_RSSI`, `DEV_CMD_RF_PROTOCOL_VER`, any pairing trigger —
    should not be implemented at all under the current golden rules: rule 2
    ("never send a byte you have not validated") and rule 2's byte-match-test
    requirement cannot be met without hardware to validate against, and §2.6
    already shows the vendor sources cannot even agree on `GetWirelessRSSI`'s
-   byte layout. If a dongle is ever acquired, redo this investigation's §2.6
-   and §2.7 findings as hardware-verified facts before writing a single
-   builder for them.
+   byte layout. Now that a dongle is available, redo this investigation's
+   §2.6 and §2.7 findings as hardware-verified facts before writing a single
+   builder for them — once the permission above is granted.
 
 No slice here touches `CLASS_DFU` or anything CLAUDE.md already gates.
 

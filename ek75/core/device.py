@@ -19,6 +19,14 @@ from .protocol import REPORT_SIZE, HDR_STATUS, is_response_ready
 VID = 0x260D
 PID = 0x0101
 
+# The 2.4G dongle (VID 260D PID 0042), a SECOND physical device — not another
+# interface of the keyboard. This project has never opened it: its vendor
+# Feature Report node (/dev/hidraw3 on the machine this was developed
+# against) is root-only, because packaging/60-ek75.rules grants `uaccess`
+# only to PID 0101. See PROTOCOL.md's `CLASS_DEVICE` section before adding
+# anything that opens it.
+DONGLE_PID = 0x0042
+
 # The keyboard exposes 5 HID interfaces; only one carries the vendor Feature
 # Report this protocol uses. Identify it by its report descriptor rather than
 # a hardcoded interface number, which is not guaranteed stable across firmware
@@ -57,15 +65,20 @@ def _looks_like_vendor_feature_report(desc_path):
     return _VENDOR_USAGE_PAGE in desc and b"\x95\x40\xb1" in desc
 
 
-def find_device():
-    """The /dev/hidrawN path for this keyboard's vendor Feature Report interface.
+def _find_vendor_feature_report(vid, pid):
+    """The /dev/hidrawN path whose HID_ID matches `vid:pid` and whose report
+    descriptor carries this protocol family's vendor Feature Report.
 
-    Returns None if the keyboard is not connected or the right interface was
-    not found. Raises nothing — callers decide how to report absence.
+    Shared by `find_device()` and `find_dongle()` — they differ only in which
+    PID they look for, both on VID 260D, so the search itself lives once
+    here rather than being copied per device.
+
+    Returns None if nothing matches. Raises nothing — callers decide how to
+    report absence.
     """
     # HID_ID in the uevent is "bus:vendor:product", each zero-padded to 8 hex
     # digits (e.g. "0003:0000260D:00000101") — not the 4-digit form lsusb uses.
-    needle = f"{VID:08X}:{PID:08X}".upper()
+    needle = f"{vid:08X}:{pid:08X}".upper()
     for path in sorted(glob.glob("/dev/hidraw*")):
         uevent_path = f"/sys/class/hidraw/{os.path.basename(path)}/device/uevent"
         try:
@@ -79,6 +92,33 @@ def find_device():
         if _looks_like_vendor_feature_report(desc_path):
             return path
     return None
+
+
+def find_device():
+    """The /dev/hidrawN path for this keyboard's vendor Feature Report interface.
+
+    Returns None if the keyboard is not connected or the right interface was
+    not found.
+    """
+    return _find_vendor_feature_report(VID, PID)
+
+
+def find_dongle():
+    """The /dev/hidrawN path for the 2.4G dongle's vendor Feature Report
+    interface, or None if it is not connected or not found.
+
+    Finding it needs no elevated access at all — this only globs `/dev` and
+    reads world-readable sysfs files. OPENING it is a different matter: see
+    `DONGLE_PID`'s comment and PROTOCOL.md's `CLASS_DEVICE` section. There is
+    deliberately no `open_dongle()` yet.
+
+    Confirmed correct on the one machine this was developed against: of the
+    dongle's 5 HID interfaces, this returns exactly the one
+    (`_looks_like_vendor_feature_report` already selects `/dev/hidraw3` there,
+    unmodified, no new detection logic) that both vendor sources describe as
+    carrying `CLASS_DEVICE` commands.
+    """
+    return _find_vendor_feature_report(VID, DONGLE_PID)
 
 
 def _set_feature(fd, packet64):

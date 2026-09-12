@@ -1143,3 +1143,64 @@ def build_macro_steps(steps):
         else:
             raise ValueError(f"unknown macro step op: {op!r}")
     return bytes(out)
+
+
+# --- CLASS_DEVICE (0) — wireless dongle status, read-only --------------------
+# Recovered from the web driver AND the Windows app, which agree on class and
+# command but disagree on HDR_SIZE (7 vs 6) — see the builder's own docstring.
+# This queries the DONGLE (VID 260D PID 0042), a second physical device this
+# project has never opened; `device.find_dongle()` locates it. Blocked on a
+# permission this repository's udev rule does not grant yet — see
+# PROTOCOL.md's `CLASS_DEVICE` section.
+DEV_CMD_WIRELESS_CONNECT_STATUS = 32
+
+
+def build_get_wireless_connect_status():
+    """Port of tgdevice.js `GetWirelessConnectState`.
+
+    `HDR_STATUS=0`, not `TARGET_ID` — every other builder in this file writes
+    `TARGET_ID`, and this one deliberately does not. The web driver hardcodes
+    0 here rather than using `this.TargetId`; the Windows app's own
+    `TgUsbHidDevice` uses a per-session "selected device" field instead, an
+    abstraction for a multi-device UI this project has no equivalent of.
+    Since this project would open the dongle's own hidraw node directly rather
+    than route a request through some other selected target, 0 — the web
+    driver's value, and this project's existing `TARGET_ID` constant — is kept
+    rather than picked arbitrarily.
+
+    `HDR_SIZE=7`: the one point the two vendor sources disagree on (the
+    Windows app sends 6), for a field this request does not otherwise use —
+    there is no payload either way.
+
+    NOT SENT TO HARDWARE: `/dev/hidraw3`, the dongle's vendor Feature Report
+    interface on the machine this was developed against, is root-only —
+    this repository's udev rule covers only the keyboard's PID (0101), not
+    the dongle's (0042). See PROTOCOL.md.
+    """
+    pkt = _new_packet()
+    pkt[HDR_STATUS] = 0
+    pkt[HDR_SIZE] = 7
+    pkt[HDR_CLASS] = CLASS_DEVICE
+    pkt[HDR_COMMAND] = DEV_CMD_WIRELESS_CONNECT_STATUS | GET_CMD
+    return bytes(pkt)
+
+
+def parse_wireless_connect_status(resp):
+    """Decode `GetWirelessConnectState`'s reply: how many devices this dongle
+    has paired, and each one's status and PID.
+
+    `target_id` for slot `t` is `(t + 1) << 4` — computed from the slot's
+    position, not a field the reply carries — matching the vendor source's
+    own `A.ConnectInfo[t].TargetId = t+1<<4` exactly.
+    """
+    count = resp[PAYLOAD_BASE]
+    slots = []
+    base = PAYLOAD_BASE + 1
+    for t in range(count):
+        offset = base + 3 * t
+        slots.append({
+            "target_id": (t + 1) << 4,
+            "status": resp[offset],
+            "pid": (resp[offset + 1] << 8) | resp[offset + 2],
+        })
+    return {"count": count, "slots": slots}

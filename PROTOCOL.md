@@ -1724,6 +1724,66 @@ create or delete — makes it less likely to be needed, not unnecessary.
   fresh every write — the identity/content-change tests above deliberately
   never changed the byte count, so this remains untested.
 
+## `CLASS_DEVICE` (0) — the 2.4G dongle's wireless status, built but unsent
+
+Not a command against the keyboard. `DEV_CMD_WIRELESS_CONNECT_STATUS` (32) is
+asked of the **dongle** — a second physical device, VID `260D` PID `0042` —
+which enumerates whatever is paired to it. See
+`docs/investigations/wireless-dongle.md` for the full investigation this
+distills.
+
+### The packet (CONFIRMED, both vendor sources agree on the command)
+
+    GetWirelessConnectState:
+      HDR_STATUS = 0        <- not TARGET_ID's usual meaning, see below
+      HDR_SIZE   = 7          (the Windows app's own TgUsbHidDevice sends 6 —
+                                the one disagreement, for a field neither
+                                request otherwise uses)
+      HDR_CLASS  = CLASS_DEVICE (0)
+      HDR_COMMAND = DEV_CMD_WIRELESS_CONNECT_STATUS(32) | GET_CMD
+      no payload
+
+    reply:
+      payload[0] = connected-slot count
+      per slot (3 bytes): status, pid_hi, pid_lo
+      target_id for slot t = (t+1) << 4     (computed, not read back)
+
+**`HDR_STATUS` is where the two vendor sources genuinely diverge, not merely a
+missing digit.** The web driver hardcodes `0`. The Windows app's own
+`TgUsbHidDevice` writes `_selTargetDev` — a per-session "which device is
+currently selected" field, for a UI that manages several paired devices at
+once. This project has no equivalent of that selector: it would open the
+dongle's own hidraw node directly, not route a request through some other
+selected target, and `0` is both the web driver's literal value and this
+file's own `TARGET_ID` constant already used for every wired query. Kept for
+that reason, not picked arbitrarily between two disagreeing sources.
+
+`protocol.build_get_wireless_connect_status` / `parse_wireless_connect_status`
+implement this. Neither has been sent — see below.
+
+### Why nothing has been sent: a permission this repository does not grant yet
+
+`device.find_dongle()` locates the dongle's vendor Feature Report interface —
+a straight mirror of `find_device()`, sharing its search logic via one
+`_find_vendor_feature_report(vid, pid)` helper rather than a copy, differing
+only in which PID it looks for. On the machine this was developed against, it
+correctly and uniquely finds `/dev/hidraw3` (of the dongle's 5 HID
+interfaces), using the *existing* `_looks_like_vendor_feature_report`
+detector completely unmodified.
+
+But that path is `crw------- root:root`. `packaging/60-ek75.rules` grants
+`uaccess` only to `idProduct=="0101"` — the keyboard. The dongle (`0042`) is
+not covered, so opening it fails with `PermissionError` regardless of how
+correct the code is. This is not a bug to fix in Python; it is a system
+configuration this project has never been asked to grant.
+
+**There is deliberately no `open_dongle()`.** Extending the udev rule to
+cover PID `0042` and re-running `sudo udevadm control --reload-rules &&
+sudo udevadm trigger` — the same two commands `packaging/install.sh` already
+runs for the keyboard — is the missing piece, and it is the owner's decision
+to make explicitly, not an assumption that "it's just like the keyboard
+rule" bundled silently into a slice that reads as read-only.
+
 ## `LED_CMD_FRAME` (4) — per-key colour, reconstructed but unsent
 
 The biggest feature the official app has and this does not: painting each key

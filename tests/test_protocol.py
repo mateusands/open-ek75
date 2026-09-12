@@ -1626,6 +1626,97 @@ def test_write_macro_data_settles_only_when_something_was_sent():
         lighting.device = real
 
 
+def test_find_dongle_reports_absent_rather_than_guessing():
+    """Portable across every machine, unlike a hardcoded `/dev/hidraw3`
+    expectation would be: on a system with no hidraw devices at all — any CI
+    runner, any machine without this hardware — `find_dongle()` must return
+    None cleanly rather than raise, and must not even attempt a file read.
+
+    `find_device()`, the keyboard's own equivalent, has never had an automated
+    test either — both are thin sysfs scans whose real confidence comes from
+    successful use against actual hardware, not from mocking `/sys` down to
+    the byte. This is the one assertion that IS safe to make everywhere: the
+    empty case, and that it costs nothing (no read attempted) to reach it.
+
+    The real machine this was developed against was checked by hand, not by
+    this test: `find_dongle()` returns `/dev/hidraw3`, the one interface (of
+    the dongle's five) that both vendor sources describe as carrying
+    `CLASS_DEVICE` commands — recorded in PROTOCOL.md as data, not asserted
+    here, because a minor number is not portable to another machine.
+    """
+    import glob as glob_module
+    from ek75.core import device
+
+    real_glob = glob_module.glob
+    opened = []
+    real_open = open
+
+    def tracking_open(path, *a, **k):
+        opened.append(path)
+        return real_open(path, *a, **k)
+
+    try:
+        glob_module.glob = lambda pattern: []
+        import builtins
+        builtins.open = tracking_open
+        assert device.find_dongle() is None
+        assert opened == [], "should not have tried to read anything"
+    finally:
+        glob_module.glob = real_glob
+        builtins.open = real_open
+
+
+def test_get_wireless_connect_status_layout():
+    """Port of tgdevice.js `GetWirelessConnectState` — CLASS_DEVICE (0),
+    DEV_CMD_WIRELESS_CONNECT_STATUS (32).
+
+    Expected bytes composed by hand from the vendor source, not by running
+    the builder:
+
+      00 status(hardcoded 0, NOT TargetId) | 07 size | 00 class | a0 cmd
+      (32|GET_CMD=0xA0) | 00 profile
+
+    `HDR_STATUS=0` is a deliberate divergence from every other builder in this
+    project (every other one writes `TARGET_ID`) — confirmed straight from the
+    vendor source, which hardcodes 0 here rather than using `this.TargetId`.
+    The one point the two vendor sources disagree on is `HDR_SIZE`: the web
+    driver sends 7, the Windows app's `TgUsbHidDevice` sends 6, for a field
+    this request does not otherwise use (no payload either way). This ports
+    the web driver's 7.
+    """
+    expected = _padded(bytes.fromhex("00" "07" "00" "a0" "00"))
+    assert protocol.build_get_wireless_connect_status() == expected
+
+
+def test_parse_wireless_connect_status():
+    """`payload[0]` is the connected-slot count, then 3 bytes per slot: status,
+    then a 2-byte PID big-endian. `target_id` for slot `t` is COMPUTED as
+    `(t+1) << 4`, not read from the reply — matching
+    `A.ConnectInfo[t].TargetId=t+1<<4` in the vendor source exactly, not a
+    field this device sends back.
+    """
+    # Two slots: the first active (status 1) with PID 0x0101, the second
+    # inactive (status 0) with PID 0x0042.
+    resp = _padded(bytes.fromhex(
+        "02" "0000000000"          # header padding up to PAYLOAD_BASE
+        "02"                        # count = 2
+        "01" "0101"                 # slot 0: status=1, pid=0x0101
+        "00" "0042"))               # slot 1: status=0, pid=0x0042
+    got = protocol.parse_wireless_connect_status(resp)
+    assert got == {
+        "count": 2,
+        "slots": [
+            {"target_id": 0x10, "status": 1, "pid": 0x0101},
+            {"target_id": 0x20, "status": 0, "pid": 0x0042},
+        ],
+    }
+
+    # Zero slots: nothing to iterate, no IndexError from an empty range.
+    empty = _padded(bytes.fromhex("02" "0000000000" "00"))
+    assert protocol.parse_wireless_connect_status(empty) == \
+        {"count": 0, "slots": []}
+
+
 def test_the_led_matrix_matches_the_public_key_list():
     """The matrix comes out of a proprietary binary; this checks it with public data.
 
