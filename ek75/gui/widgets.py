@@ -11,6 +11,26 @@ from tkinter import colorchooser, ttk
 from . import i18n, theme
 
 
+def wrap_to_width(label, margin=0):
+    """Keep a multi-line `ttk.Label`'s `wraplength` in sync with the width
+    `pack()` actually gives it, instead of a fixed number picked once.
+
+    A hand-picked `wraplength` is a bet on how wide the column will be at
+    runtime — right for the language and window size it was tuned against,
+    wrong the moment either changes. That bet was lost on this app's own
+    Device page: a Portuguese translation, longer than the English original
+    the number was chosen for, ran past a static `wraplength` and clipped
+    mid-word at the card's edge rather than wrapping. Binding `<Configure>`
+    reads the box Tk actually laid out instead of guessing it.
+
+    Requires the label to be packed with `fill="x"` (or otherwise given a
+    real width to receive `<Configure>` events for) — an unfilled label sizes
+    to its own content and never fires one worth reacting to.
+    """
+    label.bind("<Configure>",
+              lambda e: label.configure(wraplength=max(1, e.width - margin)))
+
+
 class ScrollFrame(ttk.Frame):
     """A vertically scrollable container. Put content in `.body`.
 

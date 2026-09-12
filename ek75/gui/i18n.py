@@ -23,9 +23,9 @@ STRINGS = {
         "from_windows_app": "from the official Windows app",
         "direction_inert": "stored by the firmware, but this model shows no\nvisible change — see PROTOCOL.md",
         "device_subtitle": "Dareu TK51G family — sold as Husky HTG200/HTG500/HTG800 V2",
-        "backup_blurb": ("The keyboard keeps its lighting AND its key map in\n"
-                          "persistent memory: both survive unplugging the cable.\n"
-                          "A backup saves the two together and is the way back\n"
+        "backup_blurb": ("The keyboard keeps its lighting AND its key map in "
+                          "persistent memory: both survive unplugging the cable. "
+                          "A backup saves the two together and is the way back "
                           "from a change you do not like."),
         "layout_note": ("The layout below is read from Dareu's own device profile "
                          "— 83 keys, the vendor's own geometry."),
@@ -48,16 +48,16 @@ STRINGS = {
         "rgb_mode": "RGB (the keyboard picks)",
         "color_rgb_only": "This effect is RGB only — the firmware picks its\ncolours and ignores any you send.",
         "fn_guide": "Fn shortcuts",
-        "fn_needs_device": ("Connect the keyboard to read its shortcuts.\n"
-                             "They are not listed from the vendor profile: on the unit\n"
-                             "this was built against, 23 of its assignments disagree\n"
+        "fn_needs_device": ("Connect the keyboard to read its shortcuts. "
+                             "They are not listed from the vendor profile: on the unit "
+                             "this was built against, 23 of its assignments disagree "
                              "with the hardware. See PROTOCOL.md."),
         "fn_reading": "Reading the key map…",
         "keys_live": "Read from the keyboard",
         "keys_base": "Base",
         "keys_fn": "Fn",
         "keys_click": "Click a key to see what it is assigned to.",
-        "fn_guide_hint": ("Read from the keyboard itself, not from the vendor's\n"
+        "fn_guide_hint": ("Read from the keyboard itself, not from the vendor's "
                            "profile. None of this is printed on the case."),
         "fn_search": "Filter",
         "color_ignored": "This zone ignores the colour for this effect —\nit renders a fixed pattern. See PROTOCOL.md.",
@@ -80,8 +80,8 @@ STRINGS = {
                              "edit it."),
         "nav_profiles": "Profiles",
         "profiles_blurb": ("Named configurations, kept on this machine — which is "
-                            "where the vendor's\napp keeps its Profile 1/2/3 too. "
-                            "A profile holds the same two things a\nbackup does: "
+                            "where the vendor's app keeps its Profile 1/2/3 too. "
+                            "A profile holds the same two things a backup does: "
                             "the lighting and the key map."),
         "profiles_saved": "Saved on this machine",
         "profiles_none": ("No profiles yet. \"Save current\" stores what the "
@@ -94,12 +94,12 @@ STRINGS = {
         "profiles_saved_ok": "Saved as {name}",
         "profiles_deleted": "Deleted {name}",
         "profiles_note": ("Switching is done here, not with a key on the keyboard: "
-                           "that would need a\nsecond profile in the device's own "
-                           "memory, and the command that creates one\nhas never "
+                           "that would need a second profile in the device's own "
+                           "memory, and the command that creates one has never "
                            "been sent to this hardware. See PROTOCOL.md."),
         "macros_blurb": ("Read-only. What this keyboard reports it has stored — "
-                          "the vendor's\ndevice profile does not mention macros "
-                          "at all, so this is the only\nplace the answer comes "
+                          "the vendor's device profile does not mention macros "
+                          "at all, so this is the only place the answer comes "
                           "from."),
         "macros_stored": "Stored on the keyboard",
         "macros_one": "Macro {id}",
@@ -111,16 +111,17 @@ STRINGS = {
                                 "none: the command class exists in the shared "
                                 "firmware, and this model may simply not "
                                 "implement it."),
-        "macros_writes": ("The bytes are shown raw because they have not been "
-                           "decoded. The vendor's\ndriver passes macro data "
-                           "straight through, and the code that builds it is "
-                           "not\namong the files this project has — a guess at "
-                           "the keystrokes would be an\ninvented format. "
-                           "Creating, naming and recording macros are writes, "
-                           "and\nnone of them is implemented."),
+        "macros_writes": ("The steps above are decoded — key presses, releases "
+                           "and delays — from the Windows app's own recorder, "
+                           "not guessed. Rewriting a macro's content is "
+                           "confirmed on hardware at the protocol level, but "
+                           "not yet exposed as an editor here. Creating a new "
+                           "macro or renaming one is not implemented: the two "
+                           "vendor sources package a name with the data in "
+                           "genuinely different, incompatible ways."),
         "keys_blurb": ("What each key does, read from the keyboard itself — the "
-                        "vendor's\nprofile disagrees with this hardware on 23 "
-                        "assignments. Click a key to\nsee it, then assign it "
+                        "vendor's profile disagrees with this hardware on 23 "
+                        "assignments. Click a key to see it, then assign it "
                         "something else."),
         "keys_assign": "Assign",
         "keys_layer": "Layer",
@@ -273,9 +274,9 @@ STRINGS = {
         "from_windows_app": "do app oficial da Husky",
         "direction_inert": "o firmware guarda o byte, mas este modelo não\nmuda visivelmente — veja PROTOCOL.md",
         "device_subtitle": "Família Dareu TK51G — vendido como Husky HTG200/HTG500/HTG800 V2",
-        "backup_blurb": ("O teclado guarda a iluminação E o mapa de teclas em\n"
-                          "memória persistente: os dois sobrevivem a desconectar\n"
-                          "o cabo. O backup salva os dois juntos e é o caminho\n"
+        "backup_blurb": ("O teclado guarda a iluminação E o mapa de teclas em "
+                          "memória persistente: os dois sobrevivem a desconectar "
+                          "o cabo. O backup salva os dois juntos e é o caminho "
                           "de volta de uma mudança que não agradou."),
         "layout_note": ("O layout abaixo vem do perfil de dispositivo da própria "
                          "Dareu — 83 teclas, a geometria do fabricante."),
@@ -298,16 +299,16 @@ STRINGS = {
         "rgb_mode": "RGB (o teclado escolhe)",
         "color_rgb_only": "Este efeito é só RGB — o firmware escolhe as cores\ne ignora qualquer uma que você envie.",
         "fn_guide": "Atalhos com Fn",
-        "fn_needs_device": ("Conecte o teclado para ler os atalhos dele.\n"
-                             "Eles não são listados a partir do perfil do fabricante:\n"
-                             "na unidade em que isto foi construído, 23 atribuições dele\n"
+        "fn_needs_device": ("Conecte o teclado para ler os atalhos dele. "
+                             "Eles não são listados a partir do perfil do fabricante: "
+                             "na unidade em que isto foi construído, 23 atribuições dele "
                              "discordam do hardware. Veja o PROTOCOL.md."),
         "fn_reading": "Lendo o mapa de teclas…",
         "keys_live": "Lido do teclado",
         "keys_base": "Base",
         "keys_fn": "Fn",
         "keys_click": "Clique numa tecla para ver a atribuição dela.",
-        "fn_guide_hint": ("Lidos do próprio teclado, não do perfil do fabricante.\n"
+        "fn_guide_hint": ("Lidos do próprio teclado, não do perfil do fabricante. "
                            "Nada disso vem impresso no case."),
         "fn_search": "Filtrar",
         "color_ignored": "Esta zona ignora a cor neste efeito — ela mostra\num padrão fixo. Veja PROTOCOL.md.",
@@ -330,8 +331,8 @@ STRINGS = {
                              "quadradinho para editá-lo."),
         "nav_profiles": "Perfis",
         "profiles_blurb": ("Configurações nomeadas, guardadas nesta máquina — que é "
-                            "onde o app do\nfabricante guarda o Profile 1/2/3 dele "
-                            "também. Um perfil tem as mesmas\nduas coisas que um "
+                            "onde o app do fabricante guarda o Profile 1/2/3 dele "
+                            "também. Um perfil tem as mesmas duas coisas que um "
                             "backup: a iluminação e o mapa de teclas."),
         "profiles_saved": "Guardados nesta máquina",
         "profiles_none": ("Nenhum perfil ainda. \"Salvar atual\" guarda o que o "
@@ -344,12 +345,12 @@ STRINGS = {
         "profiles_saved_ok": "Salvo como {name}",
         "profiles_deleted": "{name} apagado",
         "profiles_note": ("A troca acontece aqui, não numa tecla do teclado: isso "
-                           "exigiria um segundo\nperfil na memória do aparelho, e o "
-                           "comando que cria um nunca foi enviado\na este hardware. "
+                           "exigiria um segundo perfil na memória do aparelho, e o "
+                           "comando que cria um nunca foi enviado a este hardware. "
                            "Veja o PROTOCOL.md."),
         "macros_blurb": ("Somente leitura. O que este teclado reporta ter "
-                          "guardado — o perfil de\ndispositivo do fabricante nem "
-                          "menciona macros, então esta é a única\nfonte da "
+                          "guardado — o perfil de dispositivo do fabricante nem "
+                          "menciona macros, então esta é a única fonte da "
                           "resposta."),
         "macros_stored": "Guardadas no teclado",
         "macros_one": "Macro {id}",
@@ -360,16 +361,18 @@ STRINGS = {
                                 "Isso é diferente de não ter nenhuma: a classe de "
                                 "comando existe no firmware compartilhado, e este "
                                 "modelo pode simplesmente não implementá-la."),
-        "macros_writes": ("Os bytes aparecem crus porque não foram decodificados. "
-                           "O driver do\nfabricante repassa os dados da macro sem "
-                           "tocar, e o código que os monta não\nestá entre os "
-                           "arquivos que este projeto tem — um palpite sobre as "
-                           "teclas\nseria um formato inventado. Criar, nomear e "
-                           "gravar macros são escritas, e\nnenhuma delas está "
-                           "implementada."),
+        "macros_writes": ("Os passos acima são decodificados — teclas "
+                           "pressionadas, soltas e esperas — a partir do "
+                           "próprio gravador do app Windows, não um palpite. "
+                           "Reescrever o conteúdo de uma macro já é confirmado "
+                           "em hardware no nível do protocolo, mas ainda não "
+                           "está exposto como editor aqui. Criar uma macro "
+                           "nova ou renomear uma não está implementado: as "
+                           "duas fontes vendor empacotam nome e dados de "
+                           "formas genuinamente diferentes e incompatíveis."),
         "keys_blurb": ("O que cada tecla faz, lido do próprio teclado — o perfil "
-                        "do\nfabricante discorda deste hardware em 23 atribuições. "
-                        "Clique numa tecla\npara ver, e então atribua outra coisa "
+                        "do fabricante discorda deste hardware em 23 atribuições. "
+                        "Clique numa tecla para ver, e então atribua outra coisa "
                         "a ela."),
         "keys_assign": "Atribuir",
         "keys_layer": "Camada",

@@ -14,7 +14,7 @@ from ...core import protocol
 from .. import i18n, theme
 from ..keyboard_view import KeyboardView
 from ..widgets import (ColorPicker, ColorSlots, EffectGrid, LabeledScale,
-                        ScrollFrame, SegmentedButtons)
+                        ScrollFrame, SegmentedButtons, wrap_to_width)
 
 # Friendly names for the regions this hardware is known to have. Anything else
 # discovered at runtime is shown as "Region N" rather than guessed at.
@@ -110,13 +110,13 @@ class LightingPage(ttk.Frame):
         self._slots = ColorSlots(self._color_section, self._on_slots_changed,
                                   self._on_slot_selected)
         self._slots_note = ttk.Label(self._color_section, text=i18n.t("color_list_note"),
-                                      style="Muted.TLabel", wraplength=300,
-                                      justify="left")
+                                      style="Muted.TLabel", justify="left")
+        wrap_to_width(self._slots_note)
         self._color = ColorPicker(self._color_section, self._on_color_changed)
         self._color.pack(fill="x")
         self._color_absent = ttk.Label(self._color_holder, text="",
-                                        style="Muted.TLabel", wraplength=300,
-                                        justify="left")
+                                        style="Muted.TLabel", justify="left")
+        wrap_to_width(self._color_absent)
 
         right = ttk.Frame(self)
         right.pack(side="left", fill="both", expand=True)
@@ -152,8 +152,8 @@ class LightingPage(ttk.Frame):
                  f"{i18n.t('speed_fast')}")
         self._speed.pack(fill="x")
         self._speed_absent = ttk.Label(speed_cell, text=i18n.t("no_speed"),
-                                        style="Muted.TLabel", wraplength=210,
-                                        justify="left")
+                                        style="Muted.TLabel", justify="left")
+        wrap_to_width(self._speed_absent)
 
         direction_cell = ttk.Frame(knobs)
         direction_cell.grid(row=0, column=2, sticky="ew")
@@ -164,8 +164,9 @@ class LightingPage(ttk.Frame):
         self._direction.pack(anchor="w", pady=(2, 0))
         self._direction_note = ttk.Label(
             direction_cell, text=f"byte 8 (Flag) — {i18n.t('from_windows_app')}",
-            style="Muted.TLabel", wraplength=210, justify="left")
+            style="Muted.TLabel", justify="left")
         self._direction_note.pack(anchor="w", fill="x")
+        wrap_to_width(self._direction_note)
 
         actions = ttk.Frame(right)
         actions.pack(fill="x", pady=(14, 0))
@@ -307,7 +308,7 @@ class LightingPage(ttk.Frame):
             if limit > 1 and state.colors:
                 self._slots.set_colors(state.colors)
                 self._slots.pack(fill="x", pady=(0, 4), before=self._color)
-                self._slots_note.pack(anchor="w", pady=(0, 6), before=self._color)
+                self._slots_note.pack(anchor="w", fill="x", pady=(0, 6), before=self._color)
             else:
                 self._slots.pack_forget()
                 self._slots_note.pack_forget()
@@ -382,7 +383,7 @@ class LightingPage(ttk.Frame):
         if protocol.max_colors_for(state.effect) > 1 and state.colors:
             self._slots.set_colors(state.colors)
             self._slots.pack(fill="x", pady=(0, 4), before=self._color)
-            self._slots_note.pack(anchor="w", pady=(0, 6), before=self._color)
+            self._slots_note.pack(anchor="w", fill="x", pady=(0, 6), before=self._color)
         else:
             self._slots.pack_forget()
             self._slots_note.pack_forget()

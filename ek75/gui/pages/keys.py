@@ -24,7 +24,7 @@ from tkinter import ttk
 from ...core import keymap, protocol, state
 from .. import i18n, theme
 from ..keyboard_view import KeyboardView
-from ..widgets import Card, ScrollFrame, SegmentedButtons
+from ..widgets import Card, ScrollFrame, SegmentedButtons, wrap_to_width
 
 # The four left-hand modifiers, named without their side: this row cannot offer
 # the right-hand ones, so "Left" would be the same word on every box. Language
@@ -53,8 +53,10 @@ class KeysPage(ttk.Frame):
         self._busy = False
 
         ttk.Label(self, text=i18n.t("nav_keys"), style="Title.TLabel").pack(anchor="w")
-        ttk.Label(self, text=i18n.t("keys_blurb"), style="Muted.TLabel",
-                  justify="left").pack(anchor="w", pady=(2, 10))
+        blurb = ttk.Label(self, text=i18n.t("keys_blurb"), style="Muted.TLabel",
+                         justify="left")
+        blurb.pack(anchor="w", fill="x", pady=(2, 10))
+        wrap_to_width(blurb)
 
         columns = ttk.Frame(self)
         columns.pack(fill="both", expand=True)
@@ -78,7 +80,8 @@ class KeysPage(ttk.Frame):
 
         self._summary = ttk.Label(left, text=i18n.t("keys_click"),
                                    style="Value.TLabel", justify="left")
-        self._summary.pack(anchor="w", pady=(8, 0))
+        self._summary.pack(anchor="w", fill="x", pady=(8, 0))
+        wrap_to_width(self._summary)
 
         self._build_editor(right)
 

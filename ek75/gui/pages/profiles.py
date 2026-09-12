@@ -12,7 +12,7 @@ from tkinter import simpledialog, ttk
 
 from ...core import profiles
 from .. import i18n, theme
-from ..widgets import Card, ScrollFrame
+from ..widgets import Card, ScrollFrame, wrap_to_width
 
 
 class ProfilesPage(ttk.Frame):
@@ -25,8 +25,10 @@ class ProfilesPage(ttk.Frame):
 
         ttk.Label(self, text=i18n.t("nav_profiles"),
                   style="Title.TLabel").pack(anchor="w")
-        ttk.Label(self, text=i18n.t("profiles_blurb"), style="Muted.TLabel",
-                  justify="left").pack(anchor="w", pady=(2, 12))
+        blurb = ttk.Label(self, text=i18n.t("profiles_blurb"), style="Muted.TLabel",
+                         justify="left")
+        blurb.pack(anchor="w", fill="x", pady=(2, 12))
+        wrap_to_width(blurb)
 
         card = Card(self, i18n.t("profiles_saved"))
         card.pack(fill="both", expand=True)
@@ -46,8 +48,10 @@ class ProfilesPage(ttk.Frame):
                                           command=self._on_delete, state="disabled")
         self._delete_button.pack(side="left")
 
-        ttk.Label(self, text=i18n.t("profiles_note"), style="Muted.TLabel",
-                  justify="left").pack(anchor="w", pady=(12, 0))
+        note = ttk.Label(self, text=i18n.t("profiles_note"), style="Muted.TLabel",
+                        justify="left")
+        note.pack(anchor="w", fill="x", pady=(12, 0))
+        wrap_to_width(note)
 
     # --- data ----------------------------------------------------------------
 

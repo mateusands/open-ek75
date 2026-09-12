@@ -35,7 +35,7 @@ from tkinter import ttk
 from ...core import keymap, protocol
 from .. import i18n, key_input, theme
 from ..keyboard_view import KeyboardView
-from ..widgets import Card, ScrollFrame
+from ..widgets import Card, ScrollFrame, wrap_to_width
 
 
 class KeyTestPage(ttk.Frame):
@@ -50,8 +50,10 @@ class KeyTestPage(ttk.Frame):
         self._key_by_id = {k.id: k for k in self.profile.keys}
 
         ttk.Label(self, text=i18n.t("nav_keytest"), style="Title.TLabel").pack(anchor="w")
-        ttk.Label(self, text=i18n.t("keytest_blurb"), style="Muted.TLabel",
-                  justify="left", wraplength=760).pack(anchor="w", pady=(2, 10))
+        blurb = ttk.Label(self, text=i18n.t("keytest_blurb"), style="Muted.TLabel",
+                         justify="left")
+        blurb.pack(anchor="w", fill="x", pady=(2, 10))
+        wrap_to_width(blurb)
 
         columns = ttk.Frame(self)
         columns.pack(fill="both", expand=True)
@@ -91,9 +93,9 @@ class KeyTestPage(ttk.Frame):
         self._view.bind("<FocusOut>", self._on_focus_out, add="+")
 
         self._summary = ttk.Label(left, text=i18n.t("keytest_idle"),
-                                   style="Value.TLabel", justify="left",
-                                   wraplength=700)
-        self._summary.pack(anchor="w", pady=(8, 0))
+                                   style="Value.TLabel", justify="left")
+        self._summary.pack(anchor="w", fill="x", pady=(8, 0))
+        wrap_to_width(self._summary)
 
         self._build_limits(right)
 
